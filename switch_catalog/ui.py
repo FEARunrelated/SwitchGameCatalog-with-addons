@@ -43,9 +43,10 @@ from .db import reset_library_cache, row_to_dict
 from .file_ops import delete_file_if_present, is_shell_path, move_file_to_folder
 from .filename import detect_version
 from .metadata import apply_metadata_result, fetch_and_apply_metadata, provider_from_settings
-from .paths import BUNDLED_ICON_PATH
+from .paths import BUNDLED_ICON_PATH, THEMES_DIR
 from .scanner import scan_library
 from .settings import AppSettings, normalize_folder, save_settings
+from .theme import available_themes, install_theme, resolve_stylesheet, DEFAULT_THEME
 from .versions import load_versions, refresh_versions_if_stale, update_status
 
 
@@ -1096,6 +1097,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.settings = dialog.settings
             save_settings(self.settings)
+            QApplication.instance().setStyleSheet(resolve_stylesheet(self.settings.theme))
             self.refresh_match_games()
 
     def check_for_app_updates(self, *, silent: bool = False) -> None:
@@ -1361,6 +1363,19 @@ class SettingsDialog(QDialog):
         update_controls.addWidget(self.auto_check_updates)
         update_controls.addWidget(check_updates)
         update_controls.addStretch(1)
+        self.theme = QComboBox()
+        self.theme.addItems(available_themes())
+        self.theme.setCurrentText(
+            settings.theme if settings.theme in available_themes() else DEFAULT_THEME
+        )
+        theme_controls = QHBoxLayout()
+        install_theme_button = QPushButton("Install Theme…")
+        install_theme_button.clicked.connect(self.install_theme)
+        open_themes_button = QPushButton("Open Themes Folder")
+        open_themes_button.clicked.connect(self.open_themes_folder)
+        theme_controls.addWidget(self.theme, 1)
+        theme_controls.addWidget(install_theme_button)
+        theme_controls.addWidget(open_themes_button)
         layout.addRow("Base games folder", self.base)
         layout.addRow("Updates folder", self.updates)
         layout.addRow("Install folder", self.install)
@@ -1369,6 +1384,7 @@ class SettingsDialog(QDialog):
         layout.addRow("IGDB client secret", self.igdb_client_secret)
         layout.addRow("Scan recursively", self.recursive)
         layout.addRow("Auto-rescan on startup", self.auto)
+        layout.addRow("Theme", theme_controls)
         layout.addRow("App updates", update_controls)
         actions = QHBoxLayout()
         save = QPushButton("Save")
@@ -1393,12 +1409,32 @@ class SettingsDialog(QDialog):
         self.settings.scan_recursively = self.recursive.isChecked()
         self.settings.auto_rescan_on_startup = self.auto.isChecked()
         self.settings.auto_check_updates_on_startup = self.auto_check_updates.isChecked()
+        self.settings.theme = self.theme.currentText()
         super().accept()
 
     def check_for_updates(self) -> None:
         parent = self.parent()
         if hasattr(parent, "check_for_app_updates"):
             parent.check_for_app_updates(silent=False)
+
+    def install_theme(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Install Theme", "", "Qt Style Sheets (*.qss)"
+        )
+        if not path:
+            return
+        try:
+            name = install_theme(path)
+        except (OSError, ValueError, FileNotFoundError) as exc:
+            QMessageBox.warning(self, "Install theme failed", str(exc))
+            return
+        self.theme.clear()
+        self.theme.addItems(available_themes())
+        self.theme.setCurrentText(name)
+
+    def open_themes_folder(self) -> None:
+        THEMES_DIR.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(THEMES_DIR)))
 
 
 def _folder_field(value: str, *, shell_browse: bool = False) -> QWidget:

@@ -24,6 +24,18 @@ A local Windows desktop catalog for personal Nintendo Switch game files. It scan
 - Details view compares local update versions against the cached titledb `versions.json` latest release data
 - Titledb version lists refresh automatically when the cached files are older than 24 hours
 - Right-click deletion for duplicate game files and old update/DLC files
+- Installable themes: ships with **Dracula** and **OLED Dark**, plus support for your own `.qss` themes
+
+## Themes
+
+The app ships with two built-in themes — **Dracula** (default) and **OLED Dark** (true black). You can also install your own.
+
+A theme is a standard Qt stylesheet (`.qss`) file. To install one:
+
+- Open **Settings → Theme**, click **Install Theme…**, and pick a `.qss` file, **or**
+- Click **Open Themes Folder** (or browse to `%LOCALAPPDATA%\Switch Game Catalog\themes`) and drop `.qss` files in there.
+
+Installed themes appear in the **Theme** dropdown by file name. Pick one and click **Save** to apply it immediately — your choice is remembered in `settings.json` across restarts.
 
 ## Setup
 

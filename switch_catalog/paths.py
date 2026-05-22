@@ -12,6 +12,7 @@ APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
 DB_PATH = APP_DIR / "library.sqlite3"
 SETTINGS_PATH = APP_DIR / "settings.json"
 IMAGE_CACHE_DIR = APP_DIR / "images"
+THEMES_DIR = APP_DIR / "themes"
 VERSIONS_CACHE_PATH = APP_DIR / "versions.json"
 VERSIONS_TXT_CACHE_PATH = APP_DIR / "versions.txt"
 BUNDLED_ICON_PATH = PACKAGE_DIR / "assets" / "switch_game_catalog.png"
@@ -21,6 +22,7 @@ def ensure_app_dirs() -> None:
     _migrate_legacy_cache()
     APP_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    THEMES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _migrate_legacy_cache() -> None:

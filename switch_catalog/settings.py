@@ -20,6 +20,7 @@ class AppSettings:
     auto_check_updates_on_startup: bool = True
     cache_images: bool = True
     fuzzy_match_threshold: float = 0.82
+    theme: str = "Dracula"
 
 
 def load_settings() -> AppSettings:
