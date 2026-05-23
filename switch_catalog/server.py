@@ -6,13 +6,17 @@ Design notes / safety:
   ``/dl/update/<id>``). The on-disk path is looked up from the catalog and the
   file is served only if it actually exists, so there is no way to request an
   arbitrary path on disk (no directory traversal, no filesystem listing).
-- Access requires HTTP Basic Auth. Credentials are compared in constant time.
+- Access requires a password. Browsers (including the limited Nintendo Switch
+  browser, which can't show the HTTP Basic Auth popup) get a normal login page
+  whose form sets a signed session cookie; a Basic auth header is also accepted
+  for tools / "user:pass@host" URLs. Secrets are compared in constant time.
 - The server runs in a background daemon thread so the Qt UI stays responsive.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import os
 import re
@@ -21,10 +25,11 @@ import sqlite3
 import threading
 from html import escape
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from string import Template
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from .db import connect
 from .paths import DB_PATH
@@ -71,19 +76,32 @@ class _Handler(BaseHTTPRequestHandler):
         return connect(self._config["db_path"])
 
     # -- auth --------------------------------------------------------------
+    def _session_value(self) -> str:
+        return hmac.new(
+            self._config["password"].encode("utf-8"), b"sgc-session", hashlib.sha256
+        ).hexdigest()
+
     def _authorized(self) -> bool:
         cfg = self._config
-        expected = "Basic " + base64.b64encode(
+        basic = "Basic " + base64.b64encode(
             f"{cfg['username']}:{cfg['password']}".encode("utf-8")
         ).decode("ascii")
-        provided = self.headers.get("Authorization", "")
-        return hmac.compare_digest(provided, expected)
+        if hmac.compare_digest(self.headers.get("Authorization", ""), basic):
+            return True
+        token = self._cookie("sgc")
+        return bool(token) and hmac.compare_digest(token, self._session_value())
 
-    def _send_auth_challenge(self) -> None:
-        self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("WWW-Authenticate", 'Basic realm="Switch Game Catalog"')
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+    def _cookie(self, name: str) -> str:
+        header = self.headers.get("Cookie", "")
+        if not header:
+            return ""
+        try:
+            jar = SimpleCookie()
+            jar.load(header)
+        except Exception:
+            return ""
+        morsel = jar.get(name)
+        return morsel.value if morsel else ""
 
     # -- entry points ------------------------------------------------------
     def do_GET(self) -> None:
@@ -92,9 +110,18 @@ class _Handler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:
         self._handle(include_body=False)
 
+    def do_POST(self) -> None:
+        if urlparse(self.path).path == "/login":
+            self._handle_login()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
     def _handle(self, *, include_body: bool) -> None:
+        # The Nintendo Switch browser (and other limited browsers) can't show the
+        # Basic Auth popup, so unauthenticated requests get a normal login page that
+        # sets a session cookie. A Basic auth header is still honored above.
         if not self._authorized():
-            self._send_auth_challenge()
+            self._serve_login(include_body=include_body)
             return
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
@@ -105,6 +132,33 @@ class _Handler(BaseHTTPRequestHandler):
             self._serve_file(match.group(1), int(match.group(2)), include_body=include_body)
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def _handle_login(self) -> None:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        data = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        password = (parse_qs(data).get("password") or [""])[0]
+        if hmac.compare_digest(password, self._config["password"]):
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", "/")
+            self.send_header(
+                "Set-Cookie",
+                f"sgc={self._session_value()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
+            )
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self._serve_login(error=True)
+
+    def _serve_login(self, *, include_body: bool = True, error: bool = False) -> None:
+        palette = web_palette(self._config.get("theme", "Dracula"))
+        note = '<p class="err">Wrong password &mdash; try again.</p>' if error else ""
+        data = Template(_LOGIN_PAGE).safe_substitute(error=note, **palette).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if include_body:
+            self._write(data)
 
     # -- catalog listing ---------------------------------------------------
     def _serve_index(self, *, include_body: bool) -> None:
@@ -348,6 +402,38 @@ class CatalogServer:
             self._httpd.server_close()
             self._httpd = None
         self._thread = None
+
+
+_LOGIN_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in &mdash; Switch Game Catalog</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         font: 15px system-ui, sans-serif; background: ${bg}; color: ${text}; }
+  form { background: ${surface}; border: 1px solid ${border}; border-radius: 12px;
+         padding: 28px; width: 300px; max-width: 90vw; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  input { width: 100%; padding: 11px; border-radius: 8px; border: 1px solid ${border};
+          background: ${bg}; color: ${text}; font-size: 16px; margin-bottom: 14px; }
+  button { width: 100%; padding: 11px; border: 0; border-radius: 8px; cursor: pointer;
+           background: ${accent}; color: ${bg}; font-size: 16px; font-weight: 700; }
+  .err { color: #ff5555; margin: 0 0 12px; font-size: 14px; }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <h1>Switch Game Catalog</h1>
+  ${error}
+  <input type="password" name="password" placeholder="Password" autofocus>
+  <button type="submit">Sign in</button>
+</form>
+</body>
+</html>"""
 
 
 _PAGE = """<!doctype html>

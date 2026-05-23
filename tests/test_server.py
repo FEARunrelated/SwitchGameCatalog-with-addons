@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import http.cookiejar
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import pytest
@@ -65,17 +67,36 @@ def _body(served: str) -> str:
     return _request(f"{served}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
 
 
-def test_requires_auth(served):
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        _request(f"{served}/")
-    assert exc.value.code == 401
-    assert "Basic" in exc.value.headers.get("WWW-Authenticate", "")
+def test_unauthenticated_shows_login(served):
+    # No Basic Auth popup (the Switch browser can't handle it): a 200 login page instead.
+    resp = _request(f"{served}/")
+    body = resp.read().decode("utf-8")
+    assert resp.status == 200
+    assert 'name="password"' in body
+    assert "${" not in body  # all theme placeholders were substituted
+    assert "Test Game" not in body  # catalog stays hidden until signed in
 
 
-def test_rejects_wrong_password(served):
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        _request(f"{served}/", auth=(USERNAME, "wrong"))
-    assert exc.value.code == 401
+def test_wrong_basic_shows_login(served):
+    body = _request(f"{served}/", auth=(USERNAME, "wrong")).read().decode("utf-8")
+    assert 'name="password"' in body
+    assert "Test Game" not in body
+
+
+def test_login_form_grants_access(served):
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    data = urllib.parse.urlencode({"password": PASSWORD}).encode()
+    body = opener.open(f"{served}/login", data=data, timeout=5).read().decode("utf-8")
+    assert "Test Game" in body  # redirected to the catalog via the session cookie
+    assert any(cookie.name == "sgc" for cookie in jar)
+
+
+def test_login_wrong_password_denied(served):
+    data = urllib.parse.urlencode({"password": "nope"}).encode()
+    body = urllib.request.urlopen(f"{served}/login", data=data, timeout=5).read().decode("utf-8")
+    assert 'name="password"' in body  # back to the login form
+    assert "Test Game" not in body
 
 
 def test_index_lists_games(served):

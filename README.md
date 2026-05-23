@@ -49,7 +49,7 @@ Enable it in **Settings → Wireless download server**:
 - **Port** — defaults to `8000`.
 - **Username / Password** — required. Access is protected with HTTP Basic Auth; the server won't start without a password.
 
-The Settings dialog shows the URL to open on your other devices, e.g. `http://192.168.1.20:8000`. Open it in a browser, sign in, and you get a cover-art grid that mirrors the app's Grid View — favorites are highlighted and tapping a tile expands its download links for the base game and updates/DLC. There's a search box to filter by name, and downloads support resuming (HTTP range requests). The page automatically uses the colors of whatever app theme is active (Dracula, OLED Dark, or an installed `.qss`).
+The Settings dialog shows the URL to open on your other devices, e.g. `http://192.168.1.20:8000`. Open it in a browser — you get a password login page (a normal HTML form, so it works even in limited browsers like the Nintendo Switch's, which can't show the Basic Auth popup) and, once signed in, a cover-art grid that mirrors the app's Grid View — favorites are highlighted and tapping a tile expands its download links for the base game and updates/DLC. There's a search box to filter by name, and downloads support resuming (HTTP range requests). The page automatically uses the colors of whatever app theme is active (Dracula, OLED Dark, or an installed `.qss`).
 
 Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
 
