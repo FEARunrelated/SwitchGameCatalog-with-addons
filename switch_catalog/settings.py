@@ -18,6 +18,7 @@ class AppSettings:
     scan_recursively: bool = True
     auto_rescan_on_startup: bool = False
     auto_check_updates_on_startup: bool = True
+    auto_scan_metadata_on_startup: bool = False
     cache_images: bool = True
     fuzzy_match_threshold: float = 0.82
     theme: str = "Dracula"

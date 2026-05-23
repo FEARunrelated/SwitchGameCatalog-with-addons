@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -190,3 +191,50 @@ def install_theme(src_path: str | Path) -> str:
     destination = THEMES_DIR / source.name
     shutil.copy2(source, destination)
     return destination.stem
+
+
+# Web colors used to theme the built-in download server's page so it matches
+# whatever app theme is active. Qt .qss is not valid CSS, so for built-in themes
+# we keep an explicit palette; for installed .qss themes we parse a few colors
+# out of the stylesheet and fall back to the default palette for anything missing.
+_WEB_PALETTES: dict[str, dict[str, str]] = {
+    "Dracula": {
+        "bg": "#282a36", "surface": "#21222c", "border": "#44475a",
+        "text": "#f8f8f2", "muted": "#6272a4", "accent": "#50fa7b",
+        "accent2": "#8be9fd", "highlight": "#0078ff",
+    },
+    "OLED Dark": {
+        "bg": "#000000", "surface": "#0a0a0a", "border": "#1c1c1c",
+        "text": "#f8f8f2", "muted": "#6272a4", "accent": "#50fa7b",
+        "accent2": "#8be9fd", "highlight": "#0078ff",
+    },
+}
+
+
+def web_palette(name: str) -> dict[str, str]:
+    """Return a dict of web colors for the given theme (best-effort for custom .qss)."""
+    if name in _WEB_PALETTES:
+        return dict(_WEB_PALETTES[name])
+    palette = dict(_WEB_PALETTES[DEFAULT_THEME])
+    qss = resolve_stylesheet(name)
+    block = re.search(r"QWidget\s*\{([^}]*)\}", qss)
+    if block:
+        body = block.group(1)
+        bg = re.search(r"background(?:-color)?\s*:\s*([^;]+);", body)
+        if bg:
+            palette["bg"] = bg.group(1).strip()
+        fg = re.search(r"(?<![-\w])color\s*:\s*([^;]+);", body)
+        if fg:
+            palette["text"] = fg.group(1).strip()
+    surface = re.search(
+        r"Q(?:LineEdit|ListWidget|TabBar::tab)[^{]*\{[^}]*background(?:-color)?\s*:\s*([^;]+);", qss
+    )
+    if surface:
+        palette["surface"] = surface.group(1).strip()
+    accent = re.search(r"QPushButton\s*\{[^}]*background(?:-color)?\s*:\s*([^;]+);", qss)
+    if accent:
+        value = accent.group(1).strip()
+        palette["accent"] = value
+        palette["accent2"] = value
+        palette["highlight"] = value
+    return palette

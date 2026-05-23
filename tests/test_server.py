@@ -12,20 +12,19 @@ from switch_catalog.server import CatalogServer, human_size
 USERNAME = "switch"
 PASSWORD = "s3cret"
 FILE_BYTES = b"NSP-CONTENT-0123456789"
+COVER = "https://images.igdb.com/igdb/image/upload/t_cover_big/abc.jpg"
 
 
-@pytest.fixture
-def served(tmp_path):
+def _seed_db(tmp_path):
     db_path = tmp_path / "library.sqlite3"
     conn = db.connect(db_path)
     db.init_db(conn)
     game_file = tmp_path / "Test Game [0100].nsp"
     game_file.write_bytes(FILE_BYTES)
-    cur = conn.execute(
-        "INSERT INTO games(display_title, cleaned_title) VALUES (?, ?)",
-        ("Test Game", "test game"),
-    )
-    game_id = cur.lastrowid
+    game_id = conn.execute(
+        "INSERT INTO games(display_title, cleaned_title, cover_image_url, favorite) VALUES (?, ?, ?, 1)",
+        ("Test Game", "test game", COVER),
+    ).lastrowid
     conn.execute(
         """INSERT INTO game_files
            (game_id, file_path, file_name, file_extension, file_size, modified_time, file_type, is_base_game)
@@ -34,9 +33,18 @@ def served(tmp_path):
     )
     conn.commit()
     conn.close()
+    return db_path
 
+
+def _serve(tmp_path, theme="Dracula"):
     server = CatalogServer()
-    server.start("127.0.0.1", 0, USERNAME, PASSWORD, db_path=db_path)
+    server.start("127.0.0.1", 0, USERNAME, PASSWORD, db_path=_seed_db(tmp_path), theme=theme)
+    return server
+
+
+@pytest.fixture
+def served(tmp_path):
+    server = _serve(tmp_path)
     try:
         yield f"http://127.0.0.1:{server.port}"
     finally:
@@ -53,6 +61,10 @@ def _request(url: str, *, auth: tuple[str, str] | None = None, headers: dict | N
     return urllib.request.urlopen(req, timeout=5)
 
 
+def _body(served: str) -> str:
+    return _request(f"{served}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+
+
 def test_requires_auth(served):
     with pytest.raises(urllib.error.HTTPError) as exc:
         _request(f"{served}/")
@@ -67,11 +79,34 @@ def test_rejects_wrong_password(served):
 
 
 def test_index_lists_games(served):
-    resp = _request(f"{served}/", auth=(USERNAME, PASSWORD))
-    body = resp.read().decode("utf-8")
-    assert resp.status == 200
+    body = _body(served)
     assert "Test Game" in body
     assert "/dl/game/1" in body
+
+
+def test_index_grid_card(served):
+    body = _body(served)
+    # favorite game -> highlighted card + heart, and a cover-art tile
+    assert 'class="card favorite"' in body
+    assert "♥" in body  # heart
+    # IGDB cover URL is upgraded to the high-res variant, like the app's grid
+    assert "t_cover_big_2x/abc.jpg" in body
+    assert 'class="art"' in body
+    assert 'class="grid"' in body
+
+
+def test_index_uses_dracula_colors(served):
+    assert "#282a36" in _body(served)  # Dracula background
+
+
+def test_index_uses_oled_colors(tmp_path):
+    server = _serve(tmp_path, theme="OLED Dark")
+    try:
+        body = _body(f"http://127.0.0.1:{server.port}")
+    finally:
+        server.stop()
+    assert "#000000" in body  # OLED true-black background
+    assert "#282a36" not in body  # not the Dracula background
 
 
 def test_download_file(served):

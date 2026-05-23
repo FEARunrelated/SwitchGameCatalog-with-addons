@@ -73,6 +73,8 @@ class MainWindow(QMainWindow):
             self.scan()
         if self.settings.auto_check_updates_on_startup:
             QTimer.singleShot(1000, lambda: self.check_for_app_updates(silent=True))
+        if self.settings.auto_scan_metadata_on_startup and _metadata_ready(self.settings):
+            QTimer.singleShot(1200, lambda: self.refresh_all_metadata(silent=True))
 
     def apply_server_settings(self, *, notify: bool = True) -> None:
         """Start, stop, or restart the wireless server to match current settings."""
@@ -94,6 +96,7 @@ class MainWindow(QMainWindow):
                 int(self.settings.server_port),
                 self.settings.server_username or "switch",
                 self.settings.server_password,
+                theme=self.settings.theme,
             )
         except OSError as exc:
             if notify:
@@ -1062,9 +1065,10 @@ class MainWindow(QMainWindow):
         self.refresh_games()
         self.refresh_grid()
 
-    def refresh_all_metadata(self) -> None:
+    def refresh_all_metadata(self, *, silent: bool = False) -> None:
         if not _metadata_ready(self.settings):
-            QMessageBox.information(self, "Metadata", "Add API credentials for the selected provider in Settings.")
+            if not silent:
+                QMessageBox.information(self, "Metadata", "Add API credentials for the selected provider in Settings.")
             return
         rows = self.conn.execute(
             """
@@ -1085,7 +1089,8 @@ class MainWindow(QMainWindow):
             (self.settings.metadata_provider,),
         ).fetchall()
         if not rows:
-            QMessageBox.information(self, "Metadata", "All unlocked games already have cached metadata.")
+            if not silent:
+                QMessageBox.information(self, "Metadata", "All unlocked games already have cached metadata.")
             return
         progress = QProgressDialog("Scanning metadata...", "Cancel", 0, len(rows), self)
         progress.setWindowTitle("Metadata Scan")
@@ -1126,7 +1131,8 @@ class MainWindow(QMainWindow):
             message += f"\nFailed: {failures}"
         if no_match or failures:
             message += "\nThose games were marked for review."
-        QMessageBox.information(self, "Metadata scan complete", message)
+        if not silent:
+            QMessageBox.information(self, "Metadata scan complete", message)
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
@@ -1394,6 +1400,8 @@ class SettingsDialog(QDialog):
         self.auto.setChecked(settings.auto_rescan_on_startup)
         self.auto_check_updates = QCheckBox()
         self.auto_check_updates.setChecked(settings.auto_check_updates_on_startup)
+        self.auto_scan_metadata = QCheckBox()
+        self.auto_scan_metadata.setChecked(settings.auto_scan_metadata_on_startup)
         update_controls = QHBoxLayout()
         check_updates = QPushButton("Check for Updates")
         check_updates.clicked.connect(self.check_for_updates)
@@ -1437,6 +1445,7 @@ class SettingsDialog(QDialog):
         layout.addRow("IGDB client secret", self.igdb_client_secret)
         layout.addRow("Scan recursively", self.recursive)
         layout.addRow("Auto-rescan on startup", self.auto)
+        layout.addRow("Scan metadata on startup", self.auto_scan_metadata)
         layout.addRow("Theme", theme_controls)
         layout.addRow("App updates", update_controls)
         layout.addRow(server_header)
@@ -1469,6 +1478,7 @@ class SettingsDialog(QDialog):
         self.settings.scan_recursively = self.recursive.isChecked()
         self.settings.auto_rescan_on_startup = self.auto.isChecked()
         self.settings.auto_check_updates_on_startup = self.auto_check_updates.isChecked()
+        self.settings.auto_scan_metadata_on_startup = self.auto_scan_metadata.isChecked()
         self.settings.theme = self.theme.currentText()
         self.settings.server_enabled = self.server_enabled.isChecked()
         self.settings.server_lan = self.server_lan.isChecked()

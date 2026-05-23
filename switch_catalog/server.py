@@ -23,10 +23,12 @@ from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from string import Template
 from urllib.parse import quote, urlparse
 
 from .db import connect
 from .paths import DB_PATH
+from .theme import web_palette
 
 _CHUNK = 256 * 1024
 _DL_PATTERN = re.compile(r"^/dl/(game|update)/(\d+)$")
@@ -122,7 +124,8 @@ class _Handler(BaseHTTPRequestHandler):
         conn = self._db()
         try:
             games = conn.execute(
-                "SELECT id, display_title FROM games ORDER BY display_title COLLATE NOCASE"
+                "SELECT id, display_title, cover_image_url, favorite "
+                "FROM games ORDER BY favorite DESC, display_title COLLATE NOCASE"
             ).fetchall()
             files: dict[int, list[sqlite3.Row]] = {}
             for row in conn.execute(
@@ -137,24 +140,28 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-        sections: list[str] = []
+        cards: list[str] = []
         total = 0
         for game in games:
             entries: list[str] = []
             for row in sorted(files.get(game["id"], []), key=lambda r: (not r["is_base_game"], r["file_name"].lower())):
                 entries.append(self._entry("game", row["id"], row["file_name"], row["file_size"]))
-                total += 1
             for row in sorted(updates.get(game["id"], []), key=lambda r: r["file_name"].lower()):
                 label = row["file_name"]
                 if row["detected_version"]:
                     label += f"  (v{row['detected_version']})"
                 entries.append(self._entry("update", row["id"], label, row["file_size"]))
-                total += 1
-            if entries:
-                sections.append(
-                    f'<section class="game"><h2>{escape(game["display_title"])}</h2>'
-                    f'<ul>{"".join(entries)}</ul></section>'
+            if not entries:
+                continue
+            total += len(entries)
+            cards.append(
+                self._card(
+                    title=game["display_title"],
+                    cover=self._cover_url(game["cover_image_url"]),
+                    favorite=bool(game["favorite"]),
+                    entries=entries,
                 )
+            )
 
         orphans = updates.get(None, [])
         if orphans:
@@ -162,21 +169,51 @@ class _Handler(BaseHTTPRequestHandler):
                 self._entry("update", row["id"], row["file_name"], row["file_size"])
                 for row in sorted(orphans, key=lambda r: r["file_name"].lower())
             ]
-            sections.append(
-                f'<section class="game"><h2>Unmatched updates</h2>'
-                f'<ul>{"".join(entries)}</ul></section>'
-            )
+            total += len(entries)
+            cards.append(self._card(title="Unmatched updates", cover="", favorite=False, entries=entries))
 
-        body = "".join(sections) or '<p class="empty">No games in the catalog yet. Run a scan in the app.</p>'
-        return _PAGE.format(count=total, body=body)
+        body = (
+            f'<div class="grid">{"".join(cards)}</div>'
+            if cards
+            else '<p class="empty">No games in the catalog yet. Run a scan in the app.</p>'
+        )
+        palette = web_palette(self._config.get("theme", "Dracula"))
+        return Template(_PAGE).safe_substitute(count=total, body=body, **palette)
+
+    @staticmethod
+    def _card(*, title: str, cover: str, favorite: bool, entries: list[str]) -> str:
+        if cover:
+            art = f'<img class="art" loading="lazy" src="{escape(cover, quote=True)}" alt="">'
+        else:
+            art = f'<div class="art placeholder">{escape(title[:1].upper()) or "?"}</div>'
+        heart = "♥ " if favorite else ""
+        cls = "card favorite" if favorite else "card"
+        return (
+            f'<details class="{cls}" data-name="{escape(title.lower(), quote=True)}">'
+            f"<summary>{art}"
+            f'<div class="title">{heart}{escape(title)}</div>'
+            f'<div class="count">{len(entries)} file(s)</div></summary>'
+            f'<ul>{"".join(entries)}</ul></details>'
+        )
 
     @staticmethod
     def _entry(kind: str, ident: int, label: str, size: int) -> str:
         return (
-            f'<li data-name="{escape(label.lower(), quote=True)}">'
-            f'<a href="/dl/{kind}/{ident}">{escape(label)}</a>'
+            f'<li><a href="/dl/{kind}/{ident}">{escape(label)}</a>'
             f'<span class="size">{human_size(size)}</span></li>'
         )
+
+    @staticmethod
+    def _cover_url(url: str | None) -> str:
+        """Mirror the app's cover-art URL upgrade for IGDB images."""
+        if not url:
+            return ""
+        if "images.igdb.com" not in url or "t_cover_big_2x" in url:
+            return url or ""
+        for token in ("t_thumb", "t_cover_small", "t_cover_med", "t_cover_big"):
+            if token in url:
+                return url.replace(token, "t_cover_big_2x")
+        return url
 
     # -- file download (with Range support) --------------------------------
     def _serve_file(self, kind: str, ident: int, *, include_body: bool) -> None:
@@ -289,6 +326,7 @@ class CatalogServer:
         username: str,
         password: str,
         db_path: Path = DB_PATH,
+        theme: str = "Dracula",
     ) -> None:
         self.stop()
         httpd = ThreadingHTTPServer((host, port), _Handler)
@@ -297,6 +335,7 @@ class CatalogServer:
             "username": username,
             "password": password,
             "db_path": db_path,
+            "theme": theme,
         }
         thread = threading.Thread(target=httpd.serve_forever, name="catalog-server", daemon=True)
         thread.start()
@@ -318,43 +357,51 @@ _PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Switch Game Catalog</title>
 <style>
-  :root {{ color-scheme: dark; }}
-  body {{ margin: 0; font: 15px system-ui, sans-serif; background: #282a36; color: #f8f8f2; }}
-  header {{ position: sticky; top: 0; background: #21222c; padding: 16px 20px; border-bottom: 1px solid #44475a; }}
-  header h1 {{ margin: 0 0 10px; font-size: 20px; }}
-  #filter {{ width: 100%; box-sizing: border-box; padding: 10px; border-radius: 6px;
-            border: 1px solid #44475a; background: #282a36; color: #f8f8f2; font-size: 15px; }}
-  main {{ padding: 12px 20px 40px; }}
-  .game {{ margin: 18px 0; }}
-  .game h2 {{ font-size: 16px; color: #8be9fd; border-bottom: 1px solid #44475a; padding-bottom: 6px; }}
-  ul {{ list-style: none; padding: 0; margin: 0; }}
-  li {{ display: flex; justify-content: space-between; align-items: center; gap: 12px;
-        padding: 9px 10px; border-radius: 6px; }}
-  li:hover {{ background: #44475a; }}
-  a {{ color: #50fa7b; text-decoration: none; word-break: break-all; }}
-  a:hover {{ text-decoration: underline; }}
-  .size {{ color: #6272a4; font-variant-numeric: tabular-nums; white-space: nowrap; }}
-  .empty {{ color: #6272a4; }}
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px system-ui, sans-serif; background: ${bg}; color: ${text}; }
+  header { position: sticky; top: 0; z-index: 5; background: ${surface};
+           padding: 14px 18px; border-bottom: 1px solid ${border}; }
+  header h1 { margin: 0 0 10px; font-size: 18px; }
+  #filter { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid ${border};
+            background: ${bg}; color: ${text}; font-size: 15px; }
+  main { padding: 18px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .card { background: ${surface}; border: 1px solid ${border}; border-radius: 10px; overflow: hidden; }
+  .card[open] { border-color: ${accent}; }
+  .card.favorite { border-color: ${highlight}; }
+  summary { list-style: none; cursor: pointer; }
+  summary::-webkit-details-marker { display: none; }
+  .art { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: ${bg}; }
+  .placeholder { display: flex; align-items: center; justify-content: center;
+                 font-size: 42px; font-weight: 700; color: ${muted}; }
+  .title { padding: 8px 10px 2px; font-size: 13px; font-weight: 600; line-height: 1.3; }
+  .count { padding: 0 10px 9px; font-size: 12px; color: ${muted}; }
+  .card ul { list-style: none; margin: 0; padding: 6px; border-top: 1px solid ${border}; }
+  .card li { display: flex; justify-content: space-between; gap: 8px; align-items: center;
+             padding: 7px 6px; border-radius: 6px; font-size: 13px; }
+  .card li:hover { background: ${border}; }
+  a { color: ${accent}; text-decoration: none; word-break: break-all; }
+  a:hover { text-decoration: underline; }
+  .size { color: ${muted}; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .empty { color: ${muted}; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Switch Game Catalog &mdash; {count} file(s)</h1>
+  <h1>Switch Game Catalog &mdash; ${count} file(s)</h1>
   <input id="filter" type="search" placeholder="Filter by name&hellip;" autocomplete="off">
 </header>
-<main>{body}</main>
+<main>${body}</main>
 <script>
-  const box = document.getElementById('filter');
-  box.addEventListener('input', () => {{
-    const q = box.value.toLowerCase();
-    for (const li of document.querySelectorAll('li')) {{
-      li.style.display = li.dataset.name.includes(q) ? '' : 'none';
-    }}
-    for (const sec of document.querySelectorAll('section.game')) {{
-      const any = [...sec.querySelectorAll('li')].some(li => li.style.display !== 'none');
-      sec.style.display = any ? '' : 'none';
-    }}
-  }});
+  var box = document.getElementById('filter');
+  box.addEventListener('input', function () {
+    var q = box.value.toLowerCase();
+    var cards = document.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+      cards[i].style.display = cards[i].dataset.name.indexOf(q) !== -1 ? '' : 'none';
+    }
+  });
 </script>
 </body>
 </html>"""
