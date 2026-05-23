@@ -114,6 +114,16 @@ def test_root_serves_index(served):
     assert data["files"][0]["size"] == len(FILE_BYTES)
 
 
+def test_index_advertises_and_honors_ranges(served):
+    # installers may probe the index/list URL for range support before downloading
+    resp = _request(f"{served}/tinfoil", auth=(USERNAME, PASSWORD))
+    assert resp.headers.get("Accept-Ranges") == "bytes"
+    ranged = _request(f"{served}/list.txt", auth=(USERNAME, PASSWORD), headers={"Range": "bytes=0-3"})
+    assert ranged.status == 206
+    assert len(ranged.read()) == 4
+    assert ranged.headers.get("Accept-Ranges") == "bytes"
+
+
 def test_download_file(served):
     resp = _request(f"{served}/dl/game/1", auth=(USERNAME, PASSWORD))
     assert resp.status == 200

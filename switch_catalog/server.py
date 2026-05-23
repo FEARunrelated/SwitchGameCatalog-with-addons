@@ -135,12 +135,7 @@ class _Handler(BaseHTTPRequestHandler):
             "success": f"Switch Game Catalog - {len(files)} file(s)",
         }
         data = json.dumps(payload).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        if include_body:
-            self._write(data)
+        self._send_payload(data, "application/json", include_body=include_body)
 
     def _serve_url_list(self, *, include_body: bool) -> None:
         """Plain text, one download URL per line, for Awoo Installer's "Install
@@ -166,12 +161,36 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         data = ("\n".join(lines) + "\n").encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
+        self._send_payload(data, "text/plain; charset=utf-8", include_body=include_body)
+
+    def _send_payload(self, data: bytes, content_type: str, *, include_body: bool) -> None:
+        """Send an in-memory body with Range support, so installers that probe
+        the index/list URL for range support (and then range-download) are happy.
+        """
+        size = len(data)
+        start, end = 0, size - 1
+        status = HTTPStatus.OK
+        range_header = self.headers.get("Range")
+        if range_header:
+            parsed = self._parse_range(range_header, size)
+            if parsed is None:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            start, end = parsed
+            status = HTTPStatus.PARTIAL_CONTENT
+        chunk = data[start:end + 1]
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(chunk)))
+        self.send_header("Accept-Ranges", "bytes")
+        if status == HTTPStatus.PARTIAL_CONTENT:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
         if include_body:
-            self._write(data)
+            self._write(chunk)
 
     # -- file download (with Range support) --------------------------------
     def _serve_file(self, kind: str, ident: int, *, include_body: bool) -> None:
