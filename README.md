@@ -25,7 +25,7 @@ A local Windows desktop catalog for personal Nintendo Switch game files. It scan
 - Titledb version lists refresh automatically when the cached files are older than 24 hours
 - Right-click deletion for duplicate game files and old update/DLC files
 - Installable themes: ships with **Dracula** and **OLED Dark**, plus support for your own `.qss` themes
-- Built-in password-protected server that installs your catalog to a Switch over Wi-Fi (Tinfoil / DBI network source)
+- Built-in server that installs your catalog to a Switch over Wi-Fi via DBI (HTTP directory listing)
 
 ## Themes
 
@@ -38,55 +38,40 @@ A theme is a standard Qt stylesheet (`.qss`) file. To install one:
 
 Installed themes appear in the **Theme** dropdown by file name. Pick one and click **Save** to apply it immediately — your choice is remembered in `settings.json` across restarts.
 
-## Wireless install server (Tinfoil / DBI)
+## Wireless install server (DBI)
 
-The app can run a small built-in HTTP server that exposes your catalog as a **Tinfoil/DBI network source**, so a homebrew installer can install games to a Switch over Wi-Fi. (The Switch's built-in browser can't download files, which is why installing uses a homebrew installer rather than a plain web page.)
+The app can run a small built-in HTTP server that exposes your catalog as an HTTP **directory listing**, so a homebrew installer can install games to a Switch over Wi-Fi. (The Switch's built-in browser can't download files, which is why installing uses a homebrew installer rather than a plain web page.)
 
 Enable it in **Settings → Wireless download server**:
 
 - **Enable** — turn the server on/off (applies as soon as you click Save).
 - **Network access** — checked: reachable from other devices on your network (binds `0.0.0.0`). Unchecked: this PC only (`127.0.0.1`), useful for testing.
 - **Port** — defaults to `8000`.
-- **Username / Password** — when a password is set, access is protected with HTTP Basic Auth. **Leave the password blank to run the server open** (no auth) on your network — needed for installers like Awoo that can't send credentials.
+- **Username / Password** — when a password is set, access is protected with HTTP Basic Auth. **Leave the password blank to run the server open** (no auth) — simplest, and fine on a trusted network.
 
-The Settings dialog shows the source URLs for each installer.
+The Settings dialog shows the exact URL to use.
 
-The server exposes the catalog in several formats so different installers work:
+### DBI
 
-- **`/dir/`** — an Apache/nginx-style HTML directory listing. **This is what DBI reads** (and the most reliable option).
-- **`/tinfoil`** — a Tinfoil/DBI JSON index.
-- **`/list.txt`** — a plain list of direct URLs (for download managers).
-- **`/dl/...`** — the actual file downloads, with resume (HTTP range) support.
-
-### DBI (recommended)
-
-DBI is the most compatible installer. Edit `sdmc:/switch/DBI/dbi.config` and add a network source in the format `<name>=<type>|<url>`:
+[DBI](https://github.com/rashevskyv/dbi) is the recommended installer. In DBI's network-install screen, enter the server's directory URL (the Settings dialog shows it):
 
 ```
-Switch Catalog=ApacheHTTP|http://192.168.1.20:8000/dir/
+http://192.168.1.20:8000/dir/
 ```
 
-Use the **`ApacheHTTP`** type pointed at `/dir/` (keep the trailing slash). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. Launch DBI in **full-RAM/application mode** (hold `R` while opening an installed game, then start DBI), open the source, and install. (DBI's `URLList` type with absolute URLs is unreliable — use `ApacheHTTP` + `/dir/`.)
+(keep the trailing slash; use your PC's IP and port). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. DBI fetches the directory listing, shows every game, and you select what to install.
 
-### Tinfoil
+Tips:
+- Launch DBI in **full-RAM/application mode** (hold `R` while opening an installed game, then start DBI from the homebrew menu). Heavy installers crash if launched from the Album (applet mode).
+- Use a DBI build that matches your **firmware** — old builds crash on newer firmware.
 
-In Tinfoil, add a new network host:
+### Other endpoints
 
-- **Protocol** `http`, **Host** the PC's IP, **Port** your port, **Path** `/tinfoil`
-- **Username / Password** the same ones set in the app (Tinfoil has its own credential fields)
+- **`/dir/`** — Apache-style HTML directory listing (what DBI reads).
+- **`/list.txt`** — a plain list of direct file URLs, one per line, for **download managers** (`wget -i`, JDownloader) or pasting a single URL into another installer. If a password is set the URLs embed it (`http://user:pass@host/...`).
+- **`/dl/<game|update>/<id>`** — direct download of one file by catalog id.
 
-Note: old Tinfoil/DBI builds crash on newer firmware — use a build that matches your firmware.
-
-### Awoo Installer and download managers
-
-Awoo's **Install from URL** installs a **single file** — it does not read a list of URLs (point it at a list and it tries to install the list file itself, which fails). So with Awoo, either:
-
-- install the whole catalog with **Tinfoil** instead (above), or
-- in Awoo's **Install from URL**, paste one direct file URL at a time, e.g. `http://192.168.1.20:8000/dl/game/1/<filename>`.
-
-The `/list.txt` endpoint returns every file's direct URL, one per line — handy for **download managers** (`wget -i`, JDownloader) or for copying a single line into Awoo. If a password is set the URLs embed it (`http://user:pass@host/...`); with no password they're plain. Only use embedded-credential URLs on a network you trust.
-
-Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
+Only files already in your catalog are exposed (by id or by a name that exists in the catalog) — the server never serves arbitrary paths from disk, and downloads support resuming (HTTP range requests).
 
 ### Reaching it from any network (not just home Wi-Fi)
 

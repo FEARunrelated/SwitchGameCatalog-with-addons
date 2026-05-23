@@ -1,14 +1,18 @@
-"""Embedded HTTP server that exposes the catalog as a Tinfoil/DBI network source,
-so a homebrew Switch installer can download and install games over Wi-Fi.
+"""Embedded HTTP server that exposes the catalog so a homebrew Switch installer
+(e.g. DBI) can download and install games over Wi-Fi.
+
+Endpoints:
+- ``/dir/``            Apache-style HTML directory listing (point DBI here).
+- ``/dir/<filename>``  download a file by name (used by the listing).
+- ``/dl/<game|update>/<id>[/<filename>]``  download a file by catalog id.
+- ``/list.txt``        plain list of direct URLs (for download managers).
 
 Design notes / safety:
-- Files are exposed only by their database id (``/dl/game/<id>`` and
-  ``/dl/update/<id>``, with an optional trailing ``/<filename>`` the installer
-  reads the title id from). The on-disk path is looked up from the catalog and
-  the file is served only if it exists, so there is no directory traversal or
-  arbitrary filesystem access.
-- Access requires HTTP Basic Auth (what Tinfoil/DBI send); secrets are compared
-  in constant time.
+- Files are exposed only by catalog id or by a name that exists in the catalog;
+  the on-disk path is looked up from the database and served only if it exists,
+  so there is no directory traversal or arbitrary filesystem access.
+- A set password enables HTTP Basic Auth (compared in constant time); a blank
+  password runs the server open for LAN use.
 - The server runs in a background daemon thread so the Qt UI stays responsive.
 """
 
@@ -16,7 +20,6 @@ from __future__ import annotations
 
 import base64
 import hmac
-import json
 import os
 import re
 import socket
@@ -32,10 +35,9 @@ from .db import connect
 from .paths import APP_DIR, DB_PATH
 
 _CHUNK = 256 * 1024
-# Optional trailing "/<filename>" lets installers like Tinfoil read the title id
-# from the URL; it is ignored for lookup (routing is by id).
+# Optional trailing "/<filename>" lets installers read the title id from the URL;
+# it is ignored for lookup (routing is by id).
 _DL_PATTERN = re.compile(r"^/dl/(game|update)/(\d+)(?:/.*)?$")
-_INDEX_PATHS = ("/", "/tinfoil", "/tinfoil.json", "/index.json")
 _LIST_PATHS = ("/list.txt", "/awoo.txt")
 _TABLE = {"game": "game_files", "update": "updates"}
 
@@ -100,57 +102,22 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send_auth_challenge()
             return
-        # Tolerate trailing slashes — DBI requests e.g. "/list.txt/".
+        # Tolerate trailing slashes — DBI requests e.g. "/dir/".
         path = urlparse(self.path).path.rstrip("/") or "/"
-        if path in _INDEX_PATHS:
-            self._serve_tinfoil(include_body=include_body)
-            return
-        if path in _LIST_PATHS:
-            self._serve_url_list(include_body=include_body)
-            return
-        if path == "/dir":
+        if path in ("/", "/dir"):
             self._serve_dir(include_body=include_body)
             return
         if path.startswith("/dir/"):
             self._serve_dir_file(unquote(path[len("/dir/"):]), include_body=include_body)
+            return
+        if path in _LIST_PATHS:
+            self._serve_url_list(include_body=include_body)
             return
         match = _DL_PATTERN.match(path)
         if match:
             self._serve_file(match.group(1), int(match.group(2)), include_body=include_body)
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
-
-    # -- tinfoil index -----------------------------------------------------
-    def _base_url(self) -> str:
-        host = self.headers.get("Host") or f"{get_lan_ip()}:{self.server.server_address[1]}"
-        return f"http://{host}"
-
-    def _serve_tinfoil(self, *, include_body: bool) -> None:
-        """JSON index understood by Tinfoil/DBI network sources.
-
-        Each file URL carries the real filename so the installer can read the
-        title id/version; the installer applies the host's Basic auth to them.
-        """
-        base = self._base_url()
-        conn = self._db()
-        try:
-            files = [
-                {"url": f"{base}/dl/game/{row['id']}/{quote(row['file_name'])}", "size": row["file_size"]}
-                for row in conn.execute("SELECT id, file_name, file_size FROM game_files")
-            ]
-            files += [
-                {"url": f"{base}/dl/update/{row['id']}/{quote(row['file_name'])}", "size": row["file_size"]}
-                for row in conn.execute("SELECT id, file_name, file_size FROM updates")
-            ]
-        finally:
-            conn.close()
-        payload = {
-            "files": files,
-            "directories": [],
-            "success": f"Switch Game Catalog - {len(files)} file(s)",
-        }
-        data = json.dumps(payload).encode("utf-8")
-        self._send_payload(data, "application/json", include_body=include_body)
 
     def _serve_url_list(self, *, include_body: bool) -> None:
         """Plain text, one download URL per line, for Awoo Installer's "Install

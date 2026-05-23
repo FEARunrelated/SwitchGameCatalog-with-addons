@@ -81,9 +81,8 @@ class MainWindow(QMainWindow):
         self.server.stop()
         if not self.settings.server_enabled:
             return
-        # An empty password runs the server open (no auth) for LAN use — needed by
-        # installers like Awoo that can't send credentials. A set password keeps
-        # auth on (e.g. for Tinfoil, which has username/password fields).
+        # An empty password runs the server open (no auth) for LAN use — simplest
+        # for installers that just take a URL. A set password keeps Basic auth on.
         host = "0.0.0.0" if self.settings.server_lan else "127.0.0.1"
         try:
             self.server.start(
@@ -1449,7 +1448,7 @@ class SettingsDialog(QDialog):
         layout.addRow("Port", self.server_port)
         layout.addRow("Username", self.server_username)
         layout.addRow("Password", self.server_password)
-        layout.addRow("Tinfoil source", self.server_url)
+        layout.addRow("Install URL", self.server_url)
         actions = QHBoxLayout()
         save = QPushButton("Save")
         save.clicked.connect(self.accept)
@@ -1502,8 +1501,7 @@ class SettingsDialog(QDialog):
             else "(no password set — server is open on your network)"
         )
         self.server_url.setText(
-            f"DBI (ApacheHTTP source): http://{creds}{host}:{port}/dir/\n"
-            f"Tinfoil source: http://{host}:{port}/tinfoil\n"
+            f"In DBI, enter this URL: http://{creds}{host}:{port}/dir/\n"
             f"{note}"
         )
 
