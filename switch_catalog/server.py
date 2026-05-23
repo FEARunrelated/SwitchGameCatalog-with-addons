@@ -35,6 +35,7 @@ _CHUNK = 256 * 1024
 # from the URL; it is ignored for lookup (routing is by id).
 _DL_PATTERN = re.compile(r"^/dl/(game|update)/(\d+)(?:/.*)?$")
 _INDEX_PATHS = ("/", "/tinfoil", "/tinfoil.json", "/index.json")
+_LIST_PATHS = ("/list.txt", "/awoo.txt")
 _TABLE = {"game": "game_files", "update": "updates"}
 
 
@@ -93,6 +94,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path in _INDEX_PATHS:
             self._serve_tinfoil(include_body=include_body)
             return
+        if path in _LIST_PATHS:
+            self._serve_url_list(include_body=include_body)
+            return
         match = _DL_PATTERN.match(path)
         if match:
             self._serve_file(match.group(1), int(match.group(2)), include_body=include_body)
@@ -131,6 +135,35 @@ class _Handler(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if include_body:
+            self._write(data)
+
+    def _serve_url_list(self, *, include_body: bool) -> None:
+        """Plain text, one download URL per line, for Awoo Installer's "Install
+        from URL". Awoo has no separate credential fields, so the username and
+        password are embedded in each URL (the list itself is auth-protected).
+        """
+        cfg = self._config
+        host = self.headers.get("Host") or f"{get_lan_ip()}:{self.server.server_address[1]}"
+        cred = f"{quote(cfg['username'], safe='')}:{quote(cfg['password'], safe='')}@"
+        base = f"http://{cred}{host}"
+        conn = self._db()
+        try:
+            lines = [
+                f"{base}/dl/game/{row['id']}/{quote(row['file_name'])}"
+                for row in conn.execute("SELECT id, file_name FROM game_files")
+            ]
+            lines += [
+                f"{base}/dl/update/{row['id']}/{quote(row['file_name'])}"
+                for row in conn.execute("SELECT id, file_name FROM updates")
+            ]
+        finally:
+            conn.close()
+        data = ("\n".join(lines) + "\n").encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         if include_body:

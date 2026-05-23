@@ -78,6 +78,21 @@ def test_tinfoil_index(served):
     assert entry["size"] == len(FILE_BYTES)
 
 
+def test_url_list_for_awoo(served):
+    body = _request(f"{served}/list.txt", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+    lines = [line for line in body.splitlines() if line]
+    assert lines
+    # Awoo has no credential fields, so the URLs carry user:pass and the filename
+    assert lines[0].startswith(f"http://{USERNAME}:{PASSWORD}@")
+    assert "/dl/game/1/" in lines[0]
+
+
+def test_url_list_requires_auth(served):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _request(f"{served}/list.txt")
+    assert exc.value.code == 401
+
+
 def test_root_serves_index(served):
     # "/" returns the same Tinfoil index, so any configured path works
     data = json.loads(_request(f"{served}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8"))

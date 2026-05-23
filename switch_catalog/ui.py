@@ -1499,7 +1499,9 @@ class SettingsDialog(QDialog):
             return
         host = get_lan_ip() if self.server_lan.isChecked() else "127.0.0.1"
         self.server_url.setText(
-            f"Tinfoil/DBI source: http://{host}:{port}/tinfoil  (use the username/password above)"
+            f"Tinfoil source: http://{host}:{port}/tinfoil\n"
+            f"Awoo (Install from URL): http://USER:PASS@{host}:{port}/list.txt\n"
+            "(use the username/password set above)"
         )
 
     def check_for_updates(self) -> None:

@@ -56,7 +56,17 @@ In Tinfoil, add a new network host:
 - **Protocol** `http`, **Host** the PC's IP (e.g. `192.168.1.20`), **Port** your port (e.g. `8000`), **Path** `/tinfoil`
 - **Username / Password** the same ones set in the app
 
-Tinfoil then lists every catalog file and installs over Wi-Fi. (DBI works the same way with an HTTP index URL.) The index file URLs include each file's name so the installer can read the title id and version. Downloads support resuming (HTTP range requests).
+Tinfoil then lists every catalog file and installs over Wi-Fi. The index file URLs include each file's name so the installer can read the title id and version. Downloads support resuming (HTTP range requests).
+
+### Awoo Installer
+
+Awoo Installer uses **Install from URL** with a plain list of links and has no separate username/password fields, so the server offers a `/list.txt` endpoint whose URLs already include the credentials. In Awoo, choose **Install from URL** and enter:
+
+```
+http://USERNAME:PASSWORD@192.168.1.20:8000/list.txt
+```
+
+(substitute your username, password, IP, and port). Awoo reads the list and installs every file. Because the password is embedded in those URLs, only use this on a network you trust.
 
 Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
 
