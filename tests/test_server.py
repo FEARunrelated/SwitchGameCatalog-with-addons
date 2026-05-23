@@ -108,6 +108,12 @@ def test_open_when_no_password(tmp_path):
         server.stop()
 
 
+def test_trailing_slash_is_tolerated(served):
+    # DBI requests the source URL with a trailing slash (e.g. /list.txt/)
+    assert _request(f"{served}/list.txt/", auth=(USERNAME, PASSWORD)).status == 200
+    assert _request(f"{served}/tinfoil/", auth=(USERNAME, PASSWORD)).status == 200
+
+
 def test_root_serves_index(served):
     # "/" returns the same Tinfoil index, so any configured path works
     data = json.loads(_request(f"{served}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8"))

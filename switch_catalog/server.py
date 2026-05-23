@@ -99,7 +99,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send_auth_challenge()
             return
-        path = urlparse(self.path).path
+        # Tolerate trailing slashes — DBI requests e.g. "/list.txt/".
+        path = urlparse(self.path).path.rstrip("/") or "/"
         if path in _INDEX_PATHS:
             self._serve_tinfoil(include_body=include_body)
             return
