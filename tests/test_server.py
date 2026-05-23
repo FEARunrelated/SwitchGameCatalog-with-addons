@@ -93,6 +93,21 @@ def test_url_list_requires_auth(served):
     assert exc.value.code == 401
 
 
+def test_open_when_no_password(tmp_path):
+    server = CatalogServer()
+    server.start("127.0.0.1", 0, "switch", "", db_path=_seed_db(tmp_path))
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        # no auth required
+        assert json.loads(_request(f"{base}/tinfoil").read().decode())["files"]
+        assert _request(f"{base}/dl/game/1").read() == FILE_BYTES
+        # list URLs carry no embedded credentials when there is no password
+        first = _request(f"{base}/list.txt").read().decode().splitlines()[0]
+        assert first.startswith(f"http://127.0.0.1:{server.port}/dl/")
+    finally:
+        server.stop()
+
+
 def test_root_serves_index(served):
     # "/" returns the same Tinfoil index, so any configured path works
     data = json.loads(_request(f"{served}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8"))

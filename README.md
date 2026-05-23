@@ -47,7 +47,7 @@ Enable it in **Settings → Wireless download server**:
 - **Enable** — turn the server on/off (applies as soon as you click Save).
 - **Network access** — checked: reachable from other devices on your network (binds `0.0.0.0`). Unchecked: this PC only (`127.0.0.1`), useful for testing.
 - **Port** — defaults to `8000`.
-- **Username / Password** — required. Access is protected with HTTP Basic Auth; the server won't start without a password.
+- **Username / Password** — when a password is set, access is protected with HTTP Basic Auth. **Leave the password blank to run the server open** (no auth) on your network — needed for installers like Awoo that can't send credentials.
 
 The Settings dialog shows the source URL, e.g. `http://192.168.1.20:8000/tinfoil`.
 
@@ -60,13 +60,21 @@ Tinfoil then lists every catalog file and installs over Wi-Fi. The index file UR
 
 ### Awoo Installer
 
-Awoo Installer uses **Install from URL** with a plain list of links and has no separate username/password fields, so the server offers a `/list.txt` endpoint whose URLs already include the credentials. In Awoo, choose **Install from URL** and enter:
+Awoo Installer uses **Install from URL** with a plain list of links and has no separate username/password fields, so the server offers a `/list.txt` endpoint. In Awoo, choose **Install from URL** and enter the list URL.
+
+The easiest setup for Awoo is to **leave the password blank** (open server), then use:
+
+```
+http://192.168.1.20:8000/list.txt
+```
+
+If you do set a password, the `/list.txt` URLs embed it so they self-authenticate, and you enter:
 
 ```
 http://USERNAME:PASSWORD@192.168.1.20:8000/list.txt
 ```
 
-(substitute your username, password, IP, and port). Awoo reads the list and installs every file. Because the password is embedded in those URLs, only use this on a network you trust.
+(substitute your username, password, IP, and port). Awoo reads the list and installs every file. Note: Awoo doesn't always send embedded credentials — if you hit an "attempted range request when ranges aren't supported" error, clear the password to run the server open. Either way, only use this on a network you trust.
 
 Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
 

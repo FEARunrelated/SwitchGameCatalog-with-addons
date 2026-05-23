@@ -68,6 +68,8 @@ class _Handler(BaseHTTPRequestHandler):
     # -- auth --------------------------------------------------------------
     def _authorized(self) -> bool:
         cfg = self._config
+        if not cfg["password"]:
+            return True  # no password configured -> open server (LAN use)
         expected = "Basic " + base64.b64encode(
             f"{cfg['username']}:{cfg['password']}".encode("utf-8")
         ).decode("ascii")
@@ -147,7 +149,9 @@ class _Handler(BaseHTTPRequestHandler):
         """
         cfg = self._config
         host = self.headers.get("Host") or f"{get_lan_ip()}:{self.server.server_address[1]}"
-        cred = f"{quote(cfg['username'], safe='')}:{quote(cfg['password'], safe='')}@"
+        cred = ""
+        if cfg["password"]:
+            cred = f"{quote(cfg['username'], safe='')}:{quote(cfg['password'], safe='')}@"
         base = f"http://{cred}{host}"
         conn = self._db()
         try:

@@ -81,14 +81,9 @@ class MainWindow(QMainWindow):
         self.server.stop()
         if not self.settings.server_enabled:
             return
-        if not self.settings.server_password:
-            if notify:
-                QMessageBox.warning(
-                    self,
-                    "Wireless server",
-                    "Set a server password in Settings before enabling the wireless server.",
-                )
-            return
+        # An empty password runs the server open (no auth) for LAN use — needed by
+        # installers like Awoo that can't send credentials. A set password keeps
+        # auth on (e.g. for Tinfoil, which has username/password fields).
         host = "0.0.0.0" if self.settings.server_lan else "127.0.0.1"
         try:
             self.server.start(
@@ -1435,6 +1430,7 @@ class SettingsDialog(QDialog):
         self.server_enabled.toggled.connect(self._update_server_url)
         self.server_lan.toggled.connect(self._update_server_url)
         self.server_port.textChanged.connect(self._update_server_url)
+        self.server_password.textChanged.connect(self._update_server_url)
         server_header = QLabel("<b>Wireless download server</b>")
         layout.addRow("Base games folder", self.base)
         layout.addRow("Updates folder", self.updates)
@@ -1498,10 +1494,17 @@ class SettingsDialog(QDialog):
             self.server_url.setText("Server off")
             return
         host = get_lan_ip() if self.server_lan.isChecked() else "127.0.0.1"
+        has_pw = bool(self.server_password.text())
+        awoo_creds = "USER:PASS@" if has_pw else ""
+        note = (
+            "(use the username/password set above)"
+            if has_pw
+            else "(no password set — server is open on your network)"
+        )
         self.server_url.setText(
             f"Tinfoil source: http://{host}:{port}/tinfoil\n"
-            f"Awoo (Install from URL): http://USER:PASS@{host}:{port}/list.txt\n"
-            "(use the username/password set above)"
+            f"Awoo (Install from URL): http://{awoo_creds}{host}:{port}/list.txt\n"
+            f"{note}"
         )
 
     def check_for_updates(self) -> None:
