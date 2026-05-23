@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from .db import connect
-from .paths import DB_PATH
+from .paths import APP_DIR, DB_PATH
 
 _CHUNK = 256 * 1024
 # Optional trailing "/<filename>" lets installers like Tinfoil read the title id
@@ -55,8 +55,15 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "SwitchGameCatalog"
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, *args) -> None:  # silence stderr access logging
-        pass
+    def log_message(self, fmt: str, *args) -> None:
+        # Append a one-line access record (with any Range header) to server.log
+        # to help diagnose installer downloads. Best-effort; never raises.
+        try:
+            rng = self.headers.get("Range", "-") if self.headers else "-"
+            with open(APP_DIR / "server.log", "a", encoding="utf-8") as handle:
+                handle.write(f"{self.log_date_time_string()} {fmt % args} Range={rng}\n")
+        except Exception:
+            pass
 
     @property
     def _config(self) -> dict:
