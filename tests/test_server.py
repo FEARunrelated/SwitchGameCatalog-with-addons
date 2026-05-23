@@ -138,6 +138,23 @@ def test_download_file(served):
     assert resp.headers.get("Accept-Ranges") == "bytes"
 
 
+def test_tinfoil_index(served):
+    import json
+
+    data = json.loads(_request(f"{served}/tinfoil", auth=(USERNAME, PASSWORD)).read().decode("utf-8"))
+    assert isinstance(data.get("files"), list) and data["files"]
+    entry = data["files"][0]
+    assert "/dl/game/1/" in entry["url"]  # url carries the filename for title-id parsing
+    assert entry["size"] == len(FILE_BYTES)
+
+
+def test_download_with_filename_suffix(served):
+    # Tinfoil-style URL with a trailing filename still serves the file (routed by id)
+    resp = _request(f"{served}/dl/game/1/Test%20Game.nsp", auth=(USERNAME, PASSWORD))
+    assert resp.status == 200
+    assert resp.read() == FILE_BYTES
+
+
 def test_range_request(served):
     resp = _request(f"{served}/dl/game/1", auth=(USERNAME, PASSWORD), headers={"Range": "bytes=0-3"})
     assert resp.status == 206

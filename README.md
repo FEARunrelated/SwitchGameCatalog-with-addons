@@ -53,6 +53,17 @@ The Settings dialog shows the URL to open on your other devices, e.g. `http://19
 
 Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
 
+### Installing to a Switch (Tinfoil / DBI)
+
+The Switch's built-in browser can't download files, so installing to a console needs a homebrew installer (Tinfoil, DBI, Awoo) on custom firmware. The server exposes a Tinfoil-compatible index at `/tinfoil` for this.
+
+In Tinfoil, add a new network host:
+
+- **Protocol** `http`, **Host** the PC's IP (e.g. `192.168.1.20`), **Port** your port (e.g. `8000`), **Path** `/tinfoil`
+- **Username / Password** the same ones set in the app
+
+Tinfoil then lists every catalog file and downloads/installs over Wi-Fi. (DBI works the same way with an HTTP index URL.) The index URLs include each file's name so the installer can read the title id and version. The web page also shows the exact `/tinfoil` URL at the bottom.
+
 ### Reaching it from any network (not just home Wi-Fi)
 
 Basic Auth over plain HTTP is fine on a network you trust, but the credentials are not encrypted, so **do not port-forward this straight to the public internet.** To reach your catalog securely from anywhere, put the PC and your phone/laptop on your own private network with [Tailscale](https://tailscale.com) (or WireGuard): install it on both devices, then open the server at the PC's Tailscale IP. The connection is encrypted, no ports are exposed publicly, and the password still applies.

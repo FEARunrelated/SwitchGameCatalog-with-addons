@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import socket
@@ -36,7 +37,9 @@ from .paths import DB_PATH
 from .theme import web_palette
 
 _CHUNK = 256 * 1024
-_DL_PATTERN = re.compile(r"^/dl/(game|update)/(\d+)$")
+# Optional trailing "/<filename>" lets installers like Tinfoil read the title id
+# from the URL; it is ignored for lookup (routing is by id).
+_DL_PATTERN = re.compile(r"^/dl/(game|update)/(\d+)(?:/.*)?$")
 _TABLE = {"game": "game_files", "update": "updates"}
 
 
@@ -127,11 +130,50 @@ class _Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._serve_index(include_body=include_body)
             return
+        if path in ("/tinfoil", "/tinfoil.json", "/index.json"):
+            self._serve_tinfoil(include_body=include_body)
+            return
         match = _DL_PATTERN.match(path)
         if match:
             self._serve_file(match.group(1), int(match.group(2)), include_body=include_body)
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def _base_url(self) -> str:
+        host = self.headers.get("Host") or f"{get_lan_ip()}:{self.server.server_address[1]}"
+        return f"http://{host}"
+
+    def _serve_tinfoil(self, *, include_body: bool) -> None:
+        """JSON index understood by Tinfoil/DBI network sources.
+
+        Each file URL carries the real filename so the installer can read the
+        title id/version; the installer applies the host's Basic auth to them.
+        """
+        base = self._base_url()
+        conn = self._db()
+        try:
+            files = [
+                {"url": f"{base}/dl/game/{row['id']}/{quote(row['file_name'])}", "size": row["file_size"]}
+                for row in conn.execute("SELECT id, file_name, file_size FROM game_files")
+            ]
+            files += [
+                {"url": f"{base}/dl/update/{row['id']}/{quote(row['file_name'])}", "size": row["file_size"]}
+                for row in conn.execute("SELECT id, file_name, file_size FROM updates")
+            ]
+        finally:
+            conn.close()
+        payload = {
+            "files": files,
+            "directories": [],
+            "success": f"Switch Game Catalog — {len(files)} file(s)",
+        }
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if include_body:
+            self._write(data)
 
     def _handle_login(self) -> None:
         length = int(self.headers.get("Content-Length", 0) or 0)
@@ -226,13 +268,17 @@ class _Handler(BaseHTTPRequestHandler):
             total += len(entries)
             cards.append(self._card(title="Unmatched updates", cover="", favorite=False, entries=entries))
 
-        body = (
+        grid = (
             f'<div class="grid">{"".join(cards)}</div>'
             if cards
             else '<p class="empty">No games in the catalog yet. Run a scan in the app.</p>'
         )
+        footer = (
+            '<p class="foot">Installing to a Switch? Add this as a Tinfoil / DBI network source: '
+            f"<code>{escape(self._base_url())}/tinfoil</code> (use the same username &amp; password).</p>"
+        )
         palette = web_palette(self._config.get("theme", "Dracula"))
-        return Template(_PAGE).safe_substitute(count=total, body=body, **palette)
+        return Template(_PAGE).safe_substitute(count=total, body=grid + footer, **palette)
 
     @staticmethod
     def _card(*, title: str, cover: str, favorite: bool, entries: list[str]) -> str:
@@ -471,6 +517,8 @@ _PAGE = """<!doctype html>
   a:hover { text-decoration: underline; }
   .size { color: ${muted}; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .empty { color: ${muted}; }
+  .foot { margin-top: 24px; color: ${muted}; font-size: 13px; line-height: 1.6; }
+  code { background: ${surface}; border: 1px solid ${border}; padding: 2px 6px; border-radius: 5px; }
 </style>
 </head>
 <body>
