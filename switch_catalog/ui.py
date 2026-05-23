@@ -45,6 +45,7 @@ from .filename import detect_version
 from .metadata import apply_metadata_result, fetch_and_apply_metadata, provider_from_settings
 from .paths import BUNDLED_ICON_PATH, THEMES_DIR
 from .scanner import scan_library
+from .server import CatalogServer, get_lan_ip
 from .settings import AppSettings, normalize_folder, save_settings
 from .theme import available_themes, install_theme, resolve_stylesheet, DEFAULT_THEME
 from .versions import load_versions, refresh_versions_if_stale, update_status
@@ -60,16 +61,51 @@ class MainWindow(QMainWindow):
         self.pixmap_cache: dict[str, QPixmap] = {}
         self.context_highlighted_item: QListWidgetItem | None = None
         self.versions = load_versions()
+        self.server = CatalogServer()
 
         self.setWindowTitle("Switch Game Catalog")
         self.setWindowIcon(QIcon(str(BUNDLED_ICON_PATH)))
         self.resize(1180, 760)
         self._build_ui()
         self.refresh_games()
+        self.apply_server_settings(notify=False)
         if self.settings.auto_rescan_on_startup and self.settings.base_games_folder:
             self.scan()
         if self.settings.auto_check_updates_on_startup:
             QTimer.singleShot(1000, lambda: self.check_for_app_updates(silent=True))
+
+    def apply_server_settings(self, *, notify: bool = True) -> None:
+        """Start, stop, or restart the wireless server to match current settings."""
+        self.server.stop()
+        if not self.settings.server_enabled:
+            return
+        if not self.settings.server_password:
+            if notify:
+                QMessageBox.warning(
+                    self,
+                    "Wireless server",
+                    "Set a server password in Settings before enabling the wireless server.",
+                )
+            return
+        host = "0.0.0.0" if self.settings.server_lan else "127.0.0.1"
+        try:
+            self.server.start(
+                host,
+                int(self.settings.server_port),
+                self.settings.server_username or "switch",
+                self.settings.server_password,
+            )
+        except OSError as exc:
+            if notify:
+                QMessageBox.warning(
+                    self,
+                    "Wireless server",
+                    f"Could not start the server on port {self.settings.server_port}.\n\n{exc}",
+                )
+
+    def closeEvent(self, event) -> None:
+        self.server.stop()
+        super().closeEvent(event)
 
     def _build_ui(self) -> None:
         self.tabs = QTabWidget()
@@ -1098,6 +1134,7 @@ class MainWindow(QMainWindow):
             self.settings = dialog.settings
             save_settings(self.settings)
             QApplication.instance().setStyleSheet(resolve_stylesheet(self.settings.theme))
+            self.apply_server_settings()
             self.refresh_match_games()
 
     def check_for_app_updates(self, *, silent: bool = False) -> None:
@@ -1376,6 +1413,22 @@ class SettingsDialog(QDialog):
         theme_controls.addWidget(self.theme, 1)
         theme_controls.addWidget(install_theme_button)
         theme_controls.addWidget(open_themes_button)
+        self.server_enabled = QCheckBox("Serve the catalog over Wi-Fi")
+        self.server_enabled.setChecked(settings.server_enabled)
+        self.server_lan = QCheckBox("Reachable from other devices on the network")
+        self.server_lan.setChecked(settings.server_lan)
+        self.server_port = QLineEdit(str(settings.server_port))
+        self.server_username = QLineEdit(settings.server_username)
+        self.server_password = QLineEdit(settings.server_password)
+        self.server_password.setEchoMode(QLineEdit.Password)
+        self.server_url = QLabel()
+        self.server_url.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.server_url.setWordWrap(True)
+        self._update_server_url()
+        self.server_enabled.toggled.connect(self._update_server_url)
+        self.server_lan.toggled.connect(self._update_server_url)
+        self.server_port.textChanged.connect(self._update_server_url)
+        server_header = QLabel("<b>Wireless download server</b>")
         layout.addRow("Base games folder", self.base)
         layout.addRow("Updates folder", self.updates)
         layout.addRow("Install folder", self.install)
@@ -1386,6 +1439,13 @@ class SettingsDialog(QDialog):
         layout.addRow("Auto-rescan on startup", self.auto)
         layout.addRow("Theme", theme_controls)
         layout.addRow("App updates", update_controls)
+        layout.addRow(server_header)
+        layout.addRow("Enable", self.server_enabled)
+        layout.addRow("Network access", self.server_lan)
+        layout.addRow("Port", self.server_port)
+        layout.addRow("Username", self.server_username)
+        layout.addRow("Password", self.server_password)
+        layout.addRow("Open on devices", self.server_url)
         actions = QHBoxLayout()
         save = QPushButton("Save")
         save.clicked.connect(self.accept)
@@ -1410,7 +1470,28 @@ class SettingsDialog(QDialog):
         self.settings.auto_rescan_on_startup = self.auto.isChecked()
         self.settings.auto_check_updates_on_startup = self.auto_check_updates.isChecked()
         self.settings.theme = self.theme.currentText()
+        self.settings.server_enabled = self.server_enabled.isChecked()
+        self.settings.server_lan = self.server_lan.isChecked()
+        try:
+            self.settings.server_port = int(self.server_port.text().strip())
+        except ValueError:
+            pass
+        self.settings.server_username = self.server_username.text().strip() or "switch"
+        self.settings.server_password = self.server_password.text()
         super().accept()
+
+    def _update_server_url(self) -> None:
+        try:
+            port = int(self.server_port.text().strip())
+        except ValueError:
+            port = self.settings.server_port
+        if not self.server_enabled.isChecked():
+            self.server_url.setText("Server off")
+            return
+        host = get_lan_ip() if self.server_lan.isChecked() else "127.0.0.1"
+        self.server_url.setText(
+            f"http://{host}:{port}  —  sign in with the username and password above"
+        )
 
     def check_for_updates(self) -> None:
         parent = self.parent()

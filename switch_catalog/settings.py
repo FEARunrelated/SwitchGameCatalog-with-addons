@@ -21,6 +21,11 @@ class AppSettings:
     cache_images: bool = True
     fuzzy_match_threshold: float = 0.82
     theme: str = "Dracula"
+    server_enabled: bool = False
+    server_lan: bool = True
+    server_port: int = 8000
+    server_username: str = "switch"
+    server_password: str = ""
 
 
 def load_settings() -> AppSettings:

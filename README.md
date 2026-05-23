@@ -25,6 +25,7 @@ A local Windows desktop catalog for personal Nintendo Switch game files. It scan
 - Titledb version lists refresh automatically when the cached files are older than 24 hours
 - Right-click deletion for duplicate game files and old update/DLC files
 - Installable themes: ships with **Dracula** and **OLED Dark**, plus support for your own `.qss` themes
+- Built-in password-protected web server to browse and download your catalog from other devices over Wi-Fi
 
 ## Themes
 
@@ -36,6 +37,25 @@ A theme is a standard Qt stylesheet (`.qss`) file. To install one:
 - Click **Open Themes Folder** (or browse to `%LOCALAPPDATA%\Switch Game Catalog\themes`) and drop `.qss` files in there.
 
 Installed themes appear in the **Theme** dropdown by file name. Pick one and click **Save** to apply it immediately — your choice is remembered in `settings.json` across restarts.
+
+## Wireless download server
+
+The app can run a small built-in web server so you can browse your catalog and download game files from a phone or another computer over Wi-Fi.
+
+Enable it in **Settings → Wireless download server**:
+
+- **Enable** — turn the server on/off (applies as soon as you click Save).
+- **Network access** — checked: reachable from other devices on your network (binds `0.0.0.0`). Unchecked: this PC only (`127.0.0.1`), useful for testing.
+- **Port** — defaults to `8000`.
+- **Username / Password** — required. Access is protected with HTTP Basic Auth; the server won't start without a password.
+
+The Settings dialog shows the URL to open on your other devices, e.g. `http://192.168.1.20:8000`. Open it in a browser, sign in, and you get a searchable list of every game with download links for the base game and its updates/DLC. Downloads support resuming (HTTP range requests).
+
+Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
+
+### Reaching it from any network (not just home Wi-Fi)
+
+Basic Auth over plain HTTP is fine on a network you trust, but the credentials are not encrypted, so **do not port-forward this straight to the public internet.** To reach your catalog securely from anywhere, put the PC and your phone/laptop on your own private network with [Tailscale](https://tailscale.com) (or WireGuard): install it on both devices, then open the server at the PC's Tailscale IP. The connection is encrypted, no ports are exposed publicly, and the password still applies.
 
 ## Setup
 
@@ -63,6 +83,8 @@ switch_catalog/
   metadata.py
   paths.py
   scanner.py
+  server.py
   settings.py
+  theme.py
   ui.py
 ```
