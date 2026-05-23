@@ -1502,8 +1502,8 @@ class SettingsDialog(QDialog):
             else "(no password set — server is open on your network)"
         )
         self.server_url.setText(
-            f"Tinfoil/DBI (whole catalog): http://{host}:{port}/tinfoil\n"
-            f"Plain URL list (download managers): http://{creds}{host}:{port}/list.txt\n"
+            f"DBI (ApacheHTTP source): http://{creds}{host}:{port}/dir/\n"
+            f"Tinfoil source: http://{host}:{port}/tinfoil\n"
             f"{note}"
         )
 

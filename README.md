@@ -49,14 +49,33 @@ Enable it in **Settings → Wireless download server**:
 - **Port** — defaults to `8000`.
 - **Username / Password** — when a password is set, access is protected with HTTP Basic Auth. **Leave the password blank to run the server open** (no auth) on your network — needed for installers like Awoo that can't send credentials.
 
-The Settings dialog shows the source URL, e.g. `http://192.168.1.20:8000/tinfoil`.
+The Settings dialog shows the source URLs for each installer.
+
+The server exposes the catalog in several formats so different installers work:
+
+- **`/dir/`** — an Apache/nginx-style HTML directory listing. **This is what DBI reads** (and the most reliable option).
+- **`/tinfoil`** — a Tinfoil/DBI JSON index.
+- **`/list.txt`** — a plain list of direct URLs (for download managers).
+- **`/dl/...`** — the actual file downloads, with resume (HTTP range) support.
+
+### DBI (recommended)
+
+DBI is the most compatible installer. Edit `sdmc:/switch/DBI/dbi.config` and add a network source in the format `<name>=<type>|<url>`:
+
+```
+Switch Catalog=ApacheHTTP|http://192.168.1.20:8000/dir/
+```
+
+Use the **`ApacheHTTP`** type pointed at `/dir/` (keep the trailing slash). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. Launch DBI in **full-RAM/application mode** (hold `R` while opening an installed game, then start DBI), open the source, and install. (DBI's `URLList` type with absolute URLs is unreliable — use `ApacheHTTP` + `/dir/`.)
+
+### Tinfoil
 
 In Tinfoil, add a new network host:
 
-- **Protocol** `http`, **Host** the PC's IP (e.g. `192.168.1.20`), **Port** your port (e.g. `8000`), **Path** `/tinfoil`
-- **Username / Password** the same ones set in the app
+- **Protocol** `http`, **Host** the PC's IP, **Port** your port, **Path** `/tinfoil`
+- **Username / Password** the same ones set in the app (Tinfoil has its own credential fields)
 
-Tinfoil then lists every catalog file and installs over Wi-Fi. The index file URLs include each file's name so the installer can read the title id and version. Downloads support resuming (HTTP range requests).
+Note: old Tinfoil/DBI builds crash on newer firmware — use a build that matches your firmware.
 
 ### Awoo Installer and download managers
 

@@ -22,10 +22,11 @@ import re
 import socket
 import sqlite3
 import threading
+from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from .db import connect
 from .paths import APP_DIR, DB_PATH
@@ -106,6 +107,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path in _LIST_PATHS:
             self._serve_url_list(include_body=include_body)
+            return
+        if path == "/dir":
+            self._serve_dir(include_body=include_body)
+            return
+        if path.startswith("/dir/"):
+            self._serve_dir_file(unquote(path[len("/dir/"):]), include_body=include_body)
             return
         match = _DL_PATTERN.match(path)
         if match:
@@ -200,6 +207,38 @@ class _Handler(BaseHTTPRequestHandler):
         if include_body:
             self._write(chunk)
 
+    # -- apache-style directory listing (for DBI's ApacheHTTP source) ------
+    def _serve_dir(self, *, include_body: bool) -> None:
+        conn = self._db()
+        try:
+            names = [row["file_name"] for row in conn.execute("SELECT file_name FROM game_files")]
+            names += [row["file_name"] for row in conn.execute("SELECT file_name FROM updates")]
+        finally:
+            conn.close()
+        links = "".join(
+            f'<a href="{quote(name)}">{escape(name)}</a>\n' for name in sorted(names)
+        )
+        html = (
+            "<html><head><title>Index of /dir/</title></head><body>\n"
+            f"<h1>Index of /dir/</h1>\n{links}</body></html>"
+        )
+        self._send_payload(html.encode("utf-8"), "text/html; charset=utf-8", include_body=include_body)
+
+    def _serve_dir_file(self, file_name: str, *, include_body: bool) -> None:
+        conn = self._db()
+        try:
+            row = conn.execute(
+                "SELECT file_path, file_name FROM game_files WHERE file_name = ? "
+                "UNION ALL SELECT file_path, file_name FROM updates WHERE file_name = ? LIMIT 1",
+                (file_name, file_name),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None or not row["file_path"] or not os.path.isfile(row["file_path"]):
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
+            return
+        self._serve_path(Path(row["file_path"]), row["file_name"], include_body=include_body)
+
     # -- file download (with Range support) --------------------------------
     def _serve_file(self, kind: str, ident: int, *, include_body: bool) -> None:
         conn = self._db()
@@ -212,8 +251,9 @@ class _Handler(BaseHTTPRequestHandler):
         if row is None or not row["file_path"] or not os.path.isfile(row["file_path"]):
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
+        self._serve_path(Path(row["file_path"]), row["file_name"], include_body=include_body)
 
-        path = Path(row["file_path"])
+    def _serve_path(self, path: Path, file_name: str, *, include_body: bool) -> None:
         size = path.stat().st_size
         start, end = 0, size - 1
         status = HTTPStatus.OK
@@ -234,7 +274,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(length))
         self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Disposition", self._disposition(row["file_name"]))
+        self.send_header("Content-Disposition", self._disposition(file_name))
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()

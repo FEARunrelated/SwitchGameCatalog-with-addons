@@ -4,6 +4,7 @@ import base64
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 import pytest
 
@@ -106,6 +107,19 @@ def test_open_when_no_password(tmp_path):
         assert first.startswith(f"http://127.0.0.1:{server.port}/dl/")
     finally:
         server.stop()
+
+
+def test_apache_dir_listing(served):
+    name = "Test Game [0100000000010000][v0].nsp"
+    body = _request(f"{served}/dir/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+    assert f'href="{quote(name)}"' in body  # Apache-style filename link for DBI
+
+
+def test_apache_dir_download(served):
+    name = "Test Game [0100000000010000][v0].nsp"
+    resp = _request(f"{served}/dir/{quote(name)}", auth=(USERNAME, PASSWORD))
+    assert resp.status == 200
+    assert resp.read() == FILE_BYTES
 
 
 def test_trailing_slash_is_tolerated(served):
