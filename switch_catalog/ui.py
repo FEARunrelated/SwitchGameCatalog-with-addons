@@ -1495,15 +1495,15 @@ class SettingsDialog(QDialog):
             return
         host = get_lan_ip() if self.server_lan.isChecked() else "127.0.0.1"
         has_pw = bool(self.server_password.text())
-        awoo_creds = "USER:PASS@" if has_pw else ""
+        creds = "USER:PASS@" if has_pw else ""
         note = (
             "(use the username/password set above)"
             if has_pw
             else "(no password set — server is open on your network)"
         )
         self.server_url.setText(
-            f"Tinfoil source: http://{host}:{port}/tinfoil\n"
-            f"Awoo (Install from URL): http://{awoo_creds}{host}:{port}/list.txt\n"
+            f"Tinfoil/DBI (whole catalog): http://{host}:{port}/tinfoil\n"
+            f"Plain URL list (download managers): http://{creds}{host}:{port}/list.txt\n"
             f"{note}"
         )
 

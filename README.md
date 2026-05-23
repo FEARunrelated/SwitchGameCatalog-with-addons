@@ -58,23 +58,14 @@ In Tinfoil, add a new network host:
 
 Tinfoil then lists every catalog file and installs over Wi-Fi. The index file URLs include each file's name so the installer can read the title id and version. Downloads support resuming (HTTP range requests).
 
-### Awoo Installer
+### Awoo Installer and download managers
 
-Awoo Installer uses **Install from URL** with a plain list of links and has no separate username/password fields, so the server offers a `/list.txt` endpoint. In Awoo, choose **Install from URL** and enter the list URL.
+Awoo's **Install from URL** installs a **single file** — it does not read a list of URLs (point it at a list and it tries to install the list file itself, which fails). So with Awoo, either:
 
-The easiest setup for Awoo is to **leave the password blank** (open server), then use:
+- install the whole catalog with **Tinfoil** instead (above), or
+- in Awoo's **Install from URL**, paste one direct file URL at a time, e.g. `http://192.168.1.20:8000/dl/game/1/<filename>`.
 
-```
-http://192.168.1.20:8000/list.txt
-```
-
-If you do set a password, the `/list.txt` URLs embed it so they self-authenticate, and you enter:
-
-```
-http://USERNAME:PASSWORD@192.168.1.20:8000/list.txt
-```
-
-(substitute your username, password, IP, and port). Awoo reads the list and installs every file. Note: Awoo doesn't always send embedded credentials — if you hit an "attempted range request when ranges aren't supported" error, clear the password to run the server open. Either way, only use this on a network you trust.
+The `/list.txt` endpoint returns every file's direct URL, one per line — handy for **download managers** (`wget -i`, JDownloader) or for copying a single line into Awoo. If a password is set the URLs embed it (`http://user:pass@host/...`); with no password they're plain. Only use embedded-credential URLs on a network you trust.
 
 Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
 
