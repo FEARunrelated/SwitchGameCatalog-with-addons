@@ -96,7 +96,6 @@ class MainWindow(QMainWindow):
                 int(self.settings.server_port),
                 self.settings.server_username or "switch",
                 self.settings.server_password,
-                theme=self.settings.theme,
             )
         except OSError as exc:
             if notify:
@@ -1454,7 +1453,7 @@ class SettingsDialog(QDialog):
         layout.addRow("Port", self.server_port)
         layout.addRow("Username", self.server_username)
         layout.addRow("Password", self.server_password)
-        layout.addRow("Open on devices", self.server_url)
+        layout.addRow("Tinfoil source", self.server_url)
         actions = QHBoxLayout()
         save = QPushButton("Save")
         save.clicked.connect(self.accept)
@@ -1500,7 +1499,7 @@ class SettingsDialog(QDialog):
             return
         host = get_lan_ip() if self.server_lan.isChecked() else "127.0.0.1"
         self.server_url.setText(
-            f"http://{host}:{port}  —  sign in with the username and password above"
+            f"Tinfoil/DBI source: http://{host}:{port}/tinfoil  (use the username/password above)"
         )
 
     def check_for_updates(self) -> None:

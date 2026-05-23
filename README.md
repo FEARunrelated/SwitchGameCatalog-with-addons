@@ -25,7 +25,7 @@ A local Windows desktop catalog for personal Nintendo Switch game files. It scan
 - Titledb version lists refresh automatically when the cached files are older than 24 hours
 - Right-click deletion for duplicate game files and old update/DLC files
 - Installable themes: ships with **Dracula** and **OLED Dark**, plus support for your own `.qss` themes
-- Built-in password-protected web server to browse and download your catalog from other devices over Wi-Fi
+- Built-in password-protected server that installs your catalog to a Switch over Wi-Fi (Tinfoil / DBI network source)
 
 ## Themes
 
@@ -38,9 +38,9 @@ A theme is a standard Qt stylesheet (`.qss`) file. To install one:
 
 Installed themes appear in the **Theme** dropdown by file name. Pick one and click **Save** to apply it immediately — your choice is remembered in `settings.json` across restarts.
 
-## Wireless download server
+## Wireless install server (Tinfoil / DBI)
 
-The app can run a small built-in web server so you can browse your catalog and download game files from a phone or another computer over Wi-Fi.
+The app can run a small built-in HTTP server that exposes your catalog as a **Tinfoil/DBI network source**, so a homebrew installer can install games to a Switch over Wi-Fi. (The Switch's built-in browser can't download files, which is why installing uses a homebrew installer rather than a plain web page.)
 
 Enable it in **Settings → Wireless download server**:
 
@@ -49,20 +49,16 @@ Enable it in **Settings → Wireless download server**:
 - **Port** — defaults to `8000`.
 - **Username / Password** — required. Access is protected with HTTP Basic Auth; the server won't start without a password.
 
-The Settings dialog shows the URL to open on your other devices, e.g. `http://192.168.1.20:8000`. Open it in a browser — you get a password login page (a normal HTML form, so it works even in limited browsers like the Nintendo Switch's, which can't show the Basic Auth popup) and, once signed in, a cover-art grid that mirrors the app's Grid View — favorites are highlighted and tapping a tile expands its download links for the base game and updates/DLC. There's a search box to filter by name, and downloads support resuming (HTTP range requests). The page automatically uses the colors of whatever app theme is active (Dracula, OLED Dark, or an installed `.qss`).
-
-Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
-
-### Installing to a Switch (Tinfoil / DBI)
-
-The Switch's built-in browser can't download files, so installing to a console needs a homebrew installer (Tinfoil, DBI, Awoo) on custom firmware. The server exposes a Tinfoil-compatible index at `/tinfoil` for this.
+The Settings dialog shows the source URL, e.g. `http://192.168.1.20:8000/tinfoil`.
 
 In Tinfoil, add a new network host:
 
 - **Protocol** `http`, **Host** the PC's IP (e.g. `192.168.1.20`), **Port** your port (e.g. `8000`), **Path** `/tinfoil`
 - **Username / Password** the same ones set in the app
 
-Tinfoil then lists every catalog file and downloads/installs over Wi-Fi. (DBI works the same way with an HTTP index URL.) The index URLs include each file's name so the installer can read the title id and version. The web page also shows the exact `/tinfoil` URL at the bottom.
+Tinfoil then lists every catalog file and installs over Wi-Fi. (DBI works the same way with an HTTP index URL.) The index file URLs include each file's name so the installer can read the title id and version. Downloads support resuming (HTTP range requests).
+
+Only files already in your catalog are exposed, addressed by their catalog id — the server never serves arbitrary paths from disk.
 
 ### Reaching it from any network (not just home Wi-Fi)
 
