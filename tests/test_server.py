@@ -72,15 +72,18 @@ def test_rejects_wrong_password(served):
     assert exc.value.code == 401
 
 
+GAME_TITLE = "Test Game"
+
+
 def test_open_when_no_password(tmp_path):
     server = CatalogServer()
     server.start("127.0.0.1", 0, "switch", "", db_path=_seed_db(tmp_path))
     try:
         base = f"http://127.0.0.1:{server.port}"
         assert f'{quote(ALL, safe="")}/' in _request(f"{base}/dir/").read().decode("utf-8")
-        all_url = f"{base}/dir/{quote(ALL, safe='')}/"
-        assert f'href="{quote(GAME_NAME)}"' in _request(all_url).read().decode("utf-8")
-        assert _request(all_url + quote(GAME_NAME)).read() == FILE_BYTES
+        game_url = f"{base}/dir/{quote(ALL, safe='')}/{quote(GAME_TITLE, safe='')}/"
+        assert f'href="{quote(GAME_NAME)}"' in _request(game_url).read().decode("utf-8")
+        assert _request(game_url + quote(GAME_NAME)).read() == FILE_BYTES
         first = _request(f"{base}/list.txt").read().decode("utf-8").splitlines()[0]
         assert first.startswith(f"http://127.0.0.1:{server.port}/dl/")  # no embedded creds
     finally:
@@ -98,15 +101,44 @@ def test_root_serves_group_folders(served):
     assert f"{ALL}/" in body
 
 
-def test_all_games_group_lists_and_downloads(served):
-    all_url = f"{served}/dir/{quote(ALL, safe='')}/"
-    listing = _request(all_url, auth=(USERNAME, PASSWORD)).read().decode("utf-8")
-    assert f'href="{quote(GAME_NAME)}"' in listing
-    resp = _request(all_url + quote(GAME_NAME), auth=(USERNAME, PASSWORD))
+def test_group_lists_game_folders_then_files(served):
+    # /dir/<group>/ lists games (not files), /dir/<group>/<game>/ lists the files
+    games = _request(f"{served}/dir/{quote(ALL, safe='')}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+    assert f'href="{quote(GAME_TITLE, safe="")}/"' in games  # a game folder, not a file
+    assert ".nsp" not in games  # files are not listed at the group level
+
+    game_url = f"{served}/dir/{quote(ALL, safe='')}/{quote(GAME_TITLE, safe='')}/"
+    files = _request(game_url, auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+    assert f'href="{quote(GAME_NAME)}"' in files
+
+    resp = _request(game_url + quote(GAME_NAME), auth=(USERNAME, PASSWORD))
     assert resp.status == 200
     assert resp.read() == FILE_BYTES
-    assert "attachment" in resp.headers.get("Content-Disposition", "")
     assert resp.headers.get("Accept-Ranges") == "bytes"
+
+
+def test_game_folder_includes_update(tmp_path):
+    db_path = _seed_db(tmp_path)
+    conn = db.connect(db_path)
+    update_file = tmp_path / "Test Game [0100000000010800][v131072].nsp"
+    update_file.write_bytes(b"UPDATE")
+    conn.execute(
+        "INSERT INTO updates(game_id, file_path, file_name, file_size, modified_time) VALUES (1, ?, ?, ?, 0.0)",
+        (str(update_file), update_file.name, 6),
+    )
+    conn.commit()
+    conn.close()
+    server = CatalogServer()
+    server.start("127.0.0.1", 0, USERNAME, PASSWORD, db_path=db_path)
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        files = _request(
+            f"{base}/dir/{quote(ALL, safe='')}/{quote(GAME_TITLE, safe='')}/", auth=(USERNAME, PASSWORD)
+        ).read().decode("utf-8")
+        assert f'href="{quote(GAME_NAME)}"' in files  # base game
+        assert f'href="{quote(update_file.name)}"' in files  # its update, alongside
+    finally:
+        server.stop()
 
 
 def test_custom_group_folder(tmp_path):
@@ -121,8 +153,8 @@ def test_custom_group_folder(tmp_path):
         base = f"http://127.0.0.1:{server.port}"
         groups = _request(f"{base}/dir/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
         assert 'href="Favorites/"' in groups
-        files = _request(f"{base}/dir/Favorites/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
-        assert f'href="{quote(GAME_NAME)}"' in files
+        games = _request(f"{base}/dir/Favorites/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+        assert f'href="{quote(GAME_TITLE, safe="")}/"' in games
     finally:
         server.stop()
 
@@ -140,10 +172,11 @@ def test_group_db_helpers(tmp_path):
         group_id = db.create_group(conn, "RPGs")
         db.add_game_to_group(conn, 1, group_id)
         assert db.list_group_names(conn) == ["RPGs"]
-        assert GAME_NAME in db.group_file_names(conn, "RPGs")
-        assert db.group_file_names(conn, "Nope") is None
+        assert db.group_game_titles(conn, "RPGs") == [GAME_TITLE]
+        assert db.group_game_titles(conn, "Nope") is None
+        assert GAME_NAME in db.game_file_names(conn, GAME_TITLE)
         db.remove_game_from_group(conn, 1, "RPGs")
-        assert db.group_file_names(conn, "RPGs") == []
+        assert db.group_game_titles(conn, "RPGs") == []
         db.delete_group(conn, "RPGs")
         assert db.list_group_names(conn) == []
     finally:

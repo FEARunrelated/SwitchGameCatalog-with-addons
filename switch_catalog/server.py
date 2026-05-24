@@ -2,11 +2,12 @@
 (e.g. DBI) can download and install games over Wi-Fi.
 
 Endpoints (point DBI's ApacheHTTP source at ``/dir/``):
-- ``/dir/``                    folder per custom group, plus an "All Games" folder.
-- ``/dir/<group>/``            the base files + updates for that group's games.
-- ``/dir/<group>/<filename>``  download a file by name.
+- ``/dir/``                          folder per custom group, plus "All Games".
+- ``/dir/<group>/``                  one sub-folder per game in the group.
+- ``/dir/<group>/<game>/``           that game's base file then its updates.
+- ``/dir/<group>/<game>/<filename>`` download a file by name.
 - ``/dl/<game|update>/<id>[/<filename>]``  download a file by catalog id.
-- ``/list.txt``                plain list of direct URLs (for download managers).
+- ``/list.txt``                      plain list of direct URLs (download managers).
 
 Design notes / safety:
 - Files are exposed only by catalog id or by a name that exists in the catalog;
@@ -32,7 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-from .db import GROUP_ALL, connect, group_file_names, list_group_names
+from .db import GROUP_ALL, connect, game_file_names, group_game_titles, list_group_names
 from .paths import APP_DIR, DB_PATH
 
 _CHUNK = 256 * 1024
@@ -109,11 +110,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._serve_groups(include_body=include_body)
             return
         if path.startswith("/dir/"):
-            head, _, tail = path[len("/dir/"):].partition("/")
-            if tail:  # /dir/<group>/<filename> -> download
-                self._serve_dir_file(unquote(tail), include_body=include_body)
-            else:  # /dir/<group> -> list that group's files
-                self._serve_group(unquote(head), include_body=include_body)
+            # /dir/<group>/<game>/<filename> — folder per group, then per game.
+            parts = [unquote(p) for p in path[len("/dir/"):].split("/") if p]
+            if len(parts) == 1:  # /dir/<group> -> list the group's games
+                self._serve_group_games(parts[0], include_body=include_body)
+            elif len(parts) == 2:  # /dir/<group>/<game> -> list that game's files
+                self._serve_game_files(parts[1], include_body=include_body)
+            elif len(parts) >= 3:  # /dir/<group>/<game>/<filename> -> download
+                self._serve_dir_file(parts[2], include_body=include_body)
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
         if path in _LIST_PATHS:
             self._serve_url_list(include_body=include_body)
@@ -192,20 +198,32 @@ class _Handler(BaseHTTPRequestHandler):
         )
         self._send_dir_html("/dir/", links, include_body=include_body)
 
-    def _serve_group(self, name: str, *, include_body: bool) -> None:
-        """A group folder: the base files + updates for the games in the group."""
+    def _serve_group_games(self, group_name: str, *, include_body: bool) -> None:
+        """A group folder: one sub-folder per game in the group."""
         conn = self._db()
         try:
-            names = group_file_names(conn, name)
+            titles = group_game_titles(conn, group_name)
         finally:
             conn.close()
-        if names is None:
+        if titles is None:
             self.send_error(HTTPStatus.NOT_FOUND, "Group not found")
             return
         links = "".join(
-            f'<a href="{quote(file_name)}">{escape(file_name)}</a>\n' for file_name in sorted(names)
+            f'<a href="{quote(title, safe="")}/">{escape(title)}/</a>\n' for title in titles
         )
-        self._send_dir_html(f"/dir/{escape(name)}/", links, include_body=include_body)
+        self._send_dir_html(f"/dir/{escape(group_name)}/", links, include_body=include_body)
+
+    def _serve_game_files(self, display_title: str, *, include_body: bool) -> None:
+        """A game folder: its base file followed by its update/DLC files."""
+        conn = self._db()
+        try:
+            names = game_file_names(conn, display_title)
+        finally:
+            conn.close()
+        links = "".join(
+            f'<a href="{quote(file_name)}">{escape(file_name)}</a>\n' for file_name in names
+        )
+        self._send_dir_html(f"/dir/…/{escape(display_title)}/", links, include_body=include_body)
 
     def _send_dir_html(self, title: str, links: str, *, include_body: bool) -> None:
         html = (

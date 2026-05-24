@@ -193,9 +193,43 @@ def remove_game_from_group(conn: sqlite3.Connection, game_id: int, group_name: s
     conn.commit()
 
 
+def group_game_titles(conn: sqlite3.Connection, group_name: str) -> list[str] | None:
+    """Display titles of the games in a group (or all games for GROUP_ALL).
+    Returns None if the named group does not exist."""
+    if group_name == GROUP_ALL:
+        rows = conn.execute(
+            "SELECT DISTINCT display_title FROM games ORDER BY display_title COLLATE NOCASE"
+        )
+        return [row["display_title"] for row in rows]
+    group = conn.execute("SELECT id FROM catalog_groups WHERE name=?", (group_name,)).fetchone()
+    if group is None:
+        return None
+    rows = conn.execute(
+        "SELECT DISTINCT display_title FROM games WHERE cleaned_title IN "
+        "(SELECT cleaned_title FROM game_group_members WHERE group_id=?) "
+        "ORDER BY display_title COLLATE NOCASE",
+        (group["id"],),
+    )
+    return [row["display_title"] for row in rows]
+
+
+def game_file_names(conn: sqlite3.Connection, display_title: str) -> list[str]:
+    """The base file(s) and matched update/DLC files for a game, base game first."""
+    ids = [row["id"] for row in conn.execute("SELECT id FROM games WHERE display_title=?", (display_title,))]
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    base = [row["file_name"] for row in conn.execute(
+        f"SELECT file_name FROM game_files WHERE game_id IN ({placeholders}) ORDER BY is_base_game DESC, file_name", ids)]
+    updates = [row["file_name"] for row in conn.execute(
+        f"SELECT file_name FROM updates WHERE game_id IN ({placeholders}) ORDER BY file_name", ids)]
+    return base + updates
+
+
 def group_file_names(conn: sqlite3.Connection, group_name: str) -> list[str] | None:
-    """File names (base games + updates) for a group, or for all games when
-    group_name is GROUP_ALL. Returns None if the named group does not exist."""
+    """All file names (base games + updates) for a group, or all games when
+    group_name is GROUP_ALL. Returns None if the named group does not exist.
+    Used by /list.txt; the DBI folder view uses group_game_titles/game_file_names."""
     if group_name == GROUP_ALL:
         rows = conn.execute("SELECT file_name FROM game_files").fetchall()
         rows += conn.execute("SELECT file_name FROM updates").fetchall()

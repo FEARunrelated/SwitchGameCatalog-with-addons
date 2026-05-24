@@ -66,7 +66,7 @@ The Settings dialog shows the exact URL to use.
 http://192.168.1.20:8000/dir/
 ```
 
-(keep the trailing slash; use your PC's IP and port). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. DBI shows a folder for each of your **groups** plus an **All Games** folder; open one to see its games (base files + their updates) and select what to install.
+(keep the trailing slash; use your PC's IP and port). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. DBI shows a folder per **group** (plus **All Games**); open a group to see its **games**, then open a game to get its **base file and its update(s)** — so updates aren't mixed in with the game list, and you install the game then its update.
 
 Tips:
 - Launch DBI in **full-RAM/application mode** (hold `R` while opening an installed game, then start DBI from the homebrew menu). Heavy installers crash if launched from the Album (applet mode).
@@ -74,7 +74,7 @@ Tips:
 
 ### Other endpoints
 
-- **`/dir/`** — Apache-style HTML directory listing (what DBI reads).
+- **`/dir/`** — Apache-style listing DBI reads: groups → games → each game's base file + updates.
 - **`/list.txt`** — a plain list of direct file URLs, one per line, for **download managers** (`wget -i`, JDownloader) or pasting a single URL into another installer. If a password is set the URLs embed it (`http://user:pass@host/...`).
 - **`/dl/<game|update>/<id>`** — direct download of one file by catalog id.
 
