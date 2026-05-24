@@ -80,6 +80,19 @@ def init_db(conn: sqlite3.Connection) -> None:
             cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(provider, query)
         );
+
+        CREATE TABLE IF NOT EXISTS catalog_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        );
+
+        -- Membership is keyed by the stable cleaned_title (not games.id) so that
+        -- groups survive a rescan, which deletes and re-inserts game rows.
+        CREATE TABLE IF NOT EXISTS game_group_members (
+            group_id INTEGER NOT NULL REFERENCES catalog_groups(id) ON DELETE CASCADE,
+            cleaned_title TEXT NOT NULL,
+            PRIMARY KEY (group_id, cleaned_title)
+        );
         """
     )
     _ensure_column(conn, "updates", "manual_match", "INTEGER NOT NULL DEFAULT 0")
@@ -128,6 +141,72 @@ def upsert_cache(conn: sqlite3.Connection, provider: str, query: str, payload: d
         (provider, query, json.dumps(payload)),
     )
     conn.commit()
+
+
+GROUP_ALL = "All Games"
+
+
+def list_group_names(conn: sqlite3.Connection) -> list[str]:
+    return [row["name"] for row in conn.execute("SELECT name FROM catalog_groups ORDER BY name COLLATE NOCASE")]
+
+
+def create_group(conn: sqlite3.Connection, name: str) -> int | None:
+    name = name.strip().replace("/", " ").strip()
+    if not name:
+        return None
+    conn.execute("INSERT OR IGNORE INTO catalog_groups(name) VALUES (?)", (name,))
+    conn.commit()
+    row = conn.execute("SELECT id FROM catalog_groups WHERE name=?", (name,)).fetchone()
+    return int(row["id"]) if row else None
+
+
+def delete_group(conn: sqlite3.Connection, name: str) -> None:
+    conn.execute("DELETE FROM catalog_groups WHERE name=?", (name,))
+    conn.commit()
+
+
+def _cleaned_title(conn: sqlite3.Connection, game_id: int) -> str | None:
+    row = conn.execute("SELECT cleaned_title FROM games WHERE id=?", (game_id,)).fetchone()
+    return row["cleaned_title"] if row else None
+
+
+def add_game_to_group(conn: sqlite3.Connection, game_id: int, group_id: int) -> None:
+    cleaned = _cleaned_title(conn, game_id)
+    if cleaned is None:
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO game_group_members(group_id, cleaned_title) VALUES (?, ?)",
+        (group_id, cleaned),
+    )
+    conn.commit()
+
+
+def remove_game_from_group(conn: sqlite3.Connection, game_id: int, group_name: str) -> None:
+    cleaned = _cleaned_title(conn, game_id)
+    if cleaned is None:
+        return
+    conn.execute(
+        "DELETE FROM game_group_members WHERE cleaned_title=? AND "
+        "group_id IN (SELECT id FROM catalog_groups WHERE name=?)",
+        (cleaned, group_name),
+    )
+    conn.commit()
+
+
+def group_file_names(conn: sqlite3.Connection, group_name: str) -> list[str] | None:
+    """File names (base games + updates) for a group, or for all games when
+    group_name is GROUP_ALL. Returns None if the named group does not exist."""
+    if group_name == GROUP_ALL:
+        rows = conn.execute("SELECT file_name FROM game_files").fetchall()
+        rows += conn.execute("SELECT file_name FROM updates").fetchall()
+        return [row["file_name"] for row in rows]
+    group = conn.execute("SELECT id FROM catalog_groups WHERE name=?", (group_name,)).fetchone()
+    if group is None:
+        return None
+    member = "(SELECT id FROM games WHERE cleaned_title IN (SELECT cleaned_title FROM game_group_members WHERE group_id=?))"
+    rows = conn.execute(f"SELECT file_name FROM game_files WHERE game_id IN {member}", (group["id"],)).fetchall()
+    rows += conn.execute(f"SELECT file_name FROM updates WHERE game_id IN {member}", (group["id"],)).fetchall()
+    return [row["file_name"] for row in rows]
 
 
 def get_cache(conn: sqlite3.Connection, provider: str, query: str) -> dict[str, Any] | None:

@@ -26,6 +26,7 @@ A local Windows desktop catalog for personal Nintendo Switch game files. It scan
 - Right-click deletion for duplicate game files and old update/DLC files
 - Installable themes: ships with **Dracula** and **OLED Dark**, plus support for your own `.qss` themes
 - Built-in server that installs your catalog to a Switch over Wi-Fi via DBI (HTTP directory listing)
+- Custom **groups** (collections) you create and assign games to — also browsable as folders in DBI
 
 ## Themes
 
@@ -37,6 +38,12 @@ A theme is a standard Qt stylesheet (`.qss`) file. To install one:
 - Click **Open Themes Folder** (or browse to `%LOCALAPPDATA%\Switch Game Catalog\themes`) and drop `.qss` files in there.
 
 Installed themes appear in the **Theme** dropdown by file name. Pick one and click **Save** to apply it immediately — your choice is remembered in `settings.json` across restarts.
+
+## Groups
+
+You can organize games into your own **groups** (collections). In the Library, right-click a game and choose **Add to group ▸ New group…** (or an existing group). Use the **group dropdown** at the top of the Library to filter the list to one group; right-click also offers **Remove from / Delete group** when a group is selected.
+
+Groups are also exposed by the wireless server: each group becomes a folder in DBI (see below), so you can, say, make a "To Install" group on the PC and install exactly those over Wi-Fi. Group membership is stored by game title, so it survives a rescan.
 
 ## Wireless install server (DBI)
 
@@ -59,7 +66,7 @@ The Settings dialog shows the exact URL to use.
 http://192.168.1.20:8000/dir/
 ```
 
-(keep the trailing slash; use your PC's IP and port). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. DBI fetches the directory listing, shows every game, and you select what to install.
+(keep the trailing slash; use your PC's IP and port). If you set a password, embed it: `http://user:password@192.168.1.20:8000/dir/`. DBI shows a folder for each of your **groups** plus an **All Games** folder; open one to see its games (base files + their updates) and select what to install.
 
 Tips:
 - Launch DBI in **full-RAM/application mode** (hold `R` while opening an installed game, then start DBI from the homebrew menu). Heavy installers crash if launched from the Album (applet mode).

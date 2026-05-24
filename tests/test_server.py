@@ -14,6 +14,7 @@ USERNAME = "switch"
 PASSWORD = "s3cret"
 FILE_BYTES = b"NSP-CONTENT-0123456789"
 GAME_NAME = "Test Game [0100000000010000][v0].nsp"
+ALL = "All Games"
 
 
 def _seed_db(tmp_path):
@@ -76,31 +77,77 @@ def test_open_when_no_password(tmp_path):
     server.start("127.0.0.1", 0, "switch", "", db_path=_seed_db(tmp_path))
     try:
         base = f"http://127.0.0.1:{server.port}"
-        assert f'href="{quote(GAME_NAME)}"' in _request(f"{base}/dir/").read().decode("utf-8")
-        assert _request(f"{base}/dir/{quote(GAME_NAME)}").read() == FILE_BYTES
+        assert f'{quote(ALL, safe="")}/' in _request(f"{base}/dir/").read().decode("utf-8")
+        all_url = f"{base}/dir/{quote(ALL, safe='')}/"
+        assert f'href="{quote(GAME_NAME)}"' in _request(all_url).read().decode("utf-8")
+        assert _request(all_url + quote(GAME_NAME)).read() == FILE_BYTES
         first = _request(f"{base}/list.txt").read().decode("utf-8").splitlines()[0]
         assert first.startswith(f"http://127.0.0.1:{server.port}/dl/")  # no embedded creds
     finally:
         server.stop()
 
 
-# -- directory listing (DBI ApacheHTTP) -----------------------------------
-def test_dir_listing_has_file_links(served):
+# -- directory listing / groups (DBI ApacheHTTP) --------------------------
+def test_dir_lists_group_folders(served):
     body = _request(f"{served}/dir/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
-    assert f'href="{quote(GAME_NAME)}"' in body
+    assert f'href="{quote(ALL, safe="")}/"' in body  # built-in "All Games" folder
 
 
-def test_root_serves_dir_listing(served):
+def test_root_serves_group_folders(served):
     body = _request(f"{served}/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
-    assert f'href="{quote(GAME_NAME)}"' in body
+    assert f"{ALL}/" in body
 
 
-def test_dir_download_by_name(served):
-    resp = _request(f"{served}/dir/{quote(GAME_NAME)}", auth=(USERNAME, PASSWORD))
+def test_all_games_group_lists_and_downloads(served):
+    all_url = f"{served}/dir/{quote(ALL, safe='')}/"
+    listing = _request(all_url, auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+    assert f'href="{quote(GAME_NAME)}"' in listing
+    resp = _request(all_url + quote(GAME_NAME), auth=(USERNAME, PASSWORD))
     assert resp.status == 200
     assert resp.read() == FILE_BYTES
     assert "attachment" in resp.headers.get("Content-Disposition", "")
     assert resp.headers.get("Accept-Ranges") == "bytes"
+
+
+def test_custom_group_folder(tmp_path):
+    db_path = _seed_db(tmp_path)
+    conn = db.connect(db_path)
+    group_id = db.create_group(conn, "Favorites")
+    db.add_game_to_group(conn, 1, group_id)  # game id 1 from _seed_db
+    conn.close()
+    server = CatalogServer()
+    server.start("127.0.0.1", 0, USERNAME, PASSWORD, db_path=db_path)
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        groups = _request(f"{base}/dir/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+        assert 'href="Favorites/"' in groups
+        files = _request(f"{base}/dir/Favorites/", auth=(USERNAME, PASSWORD)).read().decode("utf-8")
+        assert f'href="{quote(GAME_NAME)}"' in files
+    finally:
+        server.stop()
+
+
+def test_unknown_group_is_404(served):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _request(f"{served}/dir/Nope/", auth=(USERNAME, PASSWORD))
+    assert exc.value.code == 404
+
+
+def test_group_db_helpers(tmp_path):
+    conn = db.connect(_seed_db(tmp_path))
+    try:
+        assert db.list_group_names(conn) == []
+        group_id = db.create_group(conn, "RPGs")
+        db.add_game_to_group(conn, 1, group_id)
+        assert db.list_group_names(conn) == ["RPGs"]
+        assert GAME_NAME in db.group_file_names(conn, "RPGs")
+        assert db.group_file_names(conn, "Nope") is None
+        db.remove_game_from_group(conn, 1, "RPGs")
+        assert db.group_file_names(conn, "RPGs") == []
+        db.delete_group(conn, "RPGs")
+        assert db.list_group_names(conn) == []
+    finally:
+        conn.close()
 
 
 def test_trailing_slash_is_tolerated(served):

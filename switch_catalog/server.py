@@ -1,11 +1,12 @@
 """Embedded HTTP server that exposes the catalog so a homebrew Switch installer
 (e.g. DBI) can download and install games over Wi-Fi.
 
-Endpoints:
-- ``/dir/``            Apache-style HTML directory listing (point DBI here).
-- ``/dir/<filename>``  download a file by name (used by the listing).
+Endpoints (point DBI's ApacheHTTP source at ``/dir/``):
+- ``/dir/``                    folder per custom group, plus an "All Games" folder.
+- ``/dir/<group>/``            the base files + updates for that group's games.
+- ``/dir/<group>/<filename>``  download a file by name.
 - ``/dl/<game|update>/<id>[/<filename>]``  download a file by catalog id.
-- ``/list.txt``        plain list of direct URLs (for download managers).
+- ``/list.txt``                plain list of direct URLs (for download managers).
 
 Design notes / safety:
 - Files are exposed only by catalog id or by a name that exists in the catalog;
@@ -31,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-from .db import connect
+from .db import GROUP_ALL, connect, group_file_names, list_group_names
 from .paths import APP_DIR, DB_PATH
 
 _CHUNK = 256 * 1024
@@ -105,10 +106,14 @@ class _Handler(BaseHTTPRequestHandler):
         # Tolerate trailing slashes — DBI requests e.g. "/dir/".
         path = urlparse(self.path).path.rstrip("/") or "/"
         if path in ("/", "/dir"):
-            self._serve_dir(include_body=include_body)
+            self._serve_groups(include_body=include_body)
             return
         if path.startswith("/dir/"):
-            self._serve_dir_file(unquote(path[len("/dir/"):]), include_body=include_body)
+            head, _, tail = path[len("/dir/"):].partition("/")
+            if tail:  # /dir/<group>/<filename> -> download
+                self._serve_dir_file(unquote(tail), include_body=include_body)
+            else:  # /dir/<group> -> list that group's files
+                self._serve_group(unquote(head), include_body=include_body)
             return
         if path in _LIST_PATHS:
             self._serve_url_list(include_body=include_body)
@@ -175,19 +180,37 @@ class _Handler(BaseHTTPRequestHandler):
             self._write(chunk)
 
     # -- apache-style directory listing (for DBI's ApacheHTTP source) ------
-    def _serve_dir(self, *, include_body: bool) -> None:
+    def _serve_groups(self, *, include_body: bool) -> None:
+        """Top level: one folder per custom group, plus an "All Games" folder."""
         conn = self._db()
         try:
-            names = [row["file_name"] for row in conn.execute("SELECT file_name FROM game_files")]
-            names += [row["file_name"] for row in conn.execute("SELECT file_name FROM updates")]
+            folders = [GROUP_ALL] + list_group_names(conn)
         finally:
             conn.close()
         links = "".join(
-            f'<a href="{quote(name)}">{escape(name)}</a>\n' for name in sorted(names)
+            f'<a href="{quote(name, safe="")}/">{escape(name)}/</a>\n' for name in folders
         )
+        self._send_dir_html("/dir/", links, include_body=include_body)
+
+    def _serve_group(self, name: str, *, include_body: bool) -> None:
+        """A group folder: the base files + updates for the games in the group."""
+        conn = self._db()
+        try:
+            names = group_file_names(conn, name)
+        finally:
+            conn.close()
+        if names is None:
+            self.send_error(HTTPStatus.NOT_FOUND, "Group not found")
+            return
+        links = "".join(
+            f'<a href="{quote(file_name)}">{escape(file_name)}</a>\n' for file_name in sorted(names)
+        )
+        self._send_dir_html(f"/dir/{escape(name)}/", links, include_body=include_body)
+
+    def _send_dir_html(self, title: str, links: str, *, include_body: bool) -> None:
         html = (
-            "<html><head><title>Index of /dir/</title></head><body>\n"
-            f"<h1>Index of /dir/</h1>\n{links}</body></html>"
+            f"<html><head><title>Index of {title}</title></head><body>\n"
+            f"<h1>Index of {title}</h1>\n{links}</body></html>"
         )
         self._send_payload(html.encode("utf-8"), "text/html; charset=utf-8", include_body=include_body)
 

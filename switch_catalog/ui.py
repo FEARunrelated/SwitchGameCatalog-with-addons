@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -39,7 +40,15 @@ from PySide6.QtWidgets import (
 )
 
 from .app_updates import RELEASES_PAGE_URL, check_latest_release
-from .db import reset_library_cache, row_to_dict
+from .db import (
+    add_game_to_group,
+    create_group,
+    delete_group,
+    list_group_names,
+    remove_game_from_group,
+    reset_library_cache,
+    row_to_dict,
+)
 from .file_ops import delete_file_if_present, is_shell_path, move_file_to_folder
 from .filename import detect_version
 from .metadata import apply_metadata_result, fetch_and_apply_metadata, provider_from_settings
@@ -129,6 +138,8 @@ class MainWindow(QMainWindow):
         self.search.textChanged.connect(self.refresh_games)
         self.genre_filter = QComboBox()
         self.genre_filter.currentTextChanged.connect(self.refresh_games)
+        self.group_filter = QComboBox()
+        self.group_filter.currentTextChanged.connect(self.refresh_games)
         filters = QVBoxLayout()
         self.missing_only = QCheckBox("Need Review")
         self.missing_only.stateChanged.connect(self.refresh_games)
@@ -138,6 +149,7 @@ class MainWindow(QMainWindow):
         filters.addWidget(self.updates_only)
         toolbar.addWidget(self.search, 3)
         toolbar.addWidget(self.genre_filter, 1)
+        toolbar.addWidget(self.group_filter, 1)
         toolbar.addLayout(filters)
 
         buttons = QHBoxLayout()
@@ -160,6 +172,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.games_list, 1)
         left_layout.addLayout(buttons)
         self.refresh_genres()
+        self.refresh_group_filter()
 
         right = QWidget()
         details = QVBoxLayout(right)
@@ -302,6 +315,13 @@ class MainWindow(QMainWindow):
         if genre and genre != "All Genres":
             query += " AND g.genres LIKE ?"
             args.append(f'%"{genre}"%')
+        group = self.group_filter.currentText() if hasattr(self, "group_filter") else "All Groups"
+        if group and group != "All Groups":
+            query += (
+                " AND g.cleaned_title IN (SELECT cleaned_title FROM game_group_members m "
+                "JOIN catalog_groups cg ON cg.id=m.group_id WHERE cg.name=?)"
+            )
+            args.append(group)
         if hasattr(self, "missing_only") and self.missing_only.isChecked():
             query += " AND (g.metadata_provider IS NULL OR g.needs_review=1)"
         query += " GROUP BY g.id ORDER BY g.display_title COLLATE NOCASE"
@@ -479,6 +499,19 @@ class MainWindow(QMainWindow):
             self.genre_filter.setCurrentIndex(index)
         self.genre_filter.blockSignals(False)
 
+    def refresh_group_filter(self) -> None:
+        if not hasattr(self, "group_filter"):
+            return
+        current = self.group_filter.currentText()
+        self.group_filter.blockSignals(True)
+        self.group_filter.clear()
+        self.group_filter.addItem("All Groups")
+        for name in list_group_names(self.conn):
+            self.group_filter.addItem(name)
+        index = self.group_filter.findText(current)
+        self.group_filter.setCurrentIndex(index if index >= 0 else 0)
+        self.group_filter.blockSignals(False)
+
     def open_game_menu(self, position) -> None:
         item = self.games_list.itemAt(position)
         if item is None:
@@ -488,21 +521,75 @@ class MainWindow(QMainWindow):
         self.games_list.setFocus()
         self.mark_context_item(item)
         QApplication.processEvents()
+        game_id = int(item.data(Qt.UserRole))
         menu = QMenu(self)
         search_action = menu.addAction("Search/change metadata match")
-        favorite = self.is_favorite(int(item.data(Qt.UserRole)))
+        favorite = self.is_favorite(game_id)
         favorite_action = menu.addAction("Remove favorite" if favorite else "Favorite game")
         mark_dlc_action = menu.addAction("Mark as DLC/update")
+        group_menu = menu.addMenu("Add to group")
+        group_actions = {}
+        for name in list_group_names(self.conn):
+            group_actions[group_menu.addAction(name)] = name
+        if group_actions:
+            group_menu.addSeparator()
+        new_group_action = group_menu.addAction("New group…")
+        current_group = self.group_filter.currentText() if hasattr(self, "group_filter") else "All Groups"
+        remove_group_action = None
+        delete_group_action = None
+        if current_group and current_group != "All Groups":
+            remove_group_action = menu.addAction(f"Remove from “{current_group}”")
+            delete_group_action = menu.addAction(f"Delete group “{current_group}”")
         delete_action = menu.addAction("Delete game file from disk")
         chosen = menu.exec(self.games_list.mapToGlobal(position))
         if chosen == search_action:
-            self.search_metadata_match(int(item.data(Qt.UserRole)))
+            self.search_metadata_match(game_id)
         elif chosen == favorite_action:
-            self.toggle_favorite(int(item.data(Qt.UserRole)))
+            self.toggle_favorite(game_id)
         elif chosen == mark_dlc_action:
-            self.mark_game_as_update(int(item.data(Qt.UserRole)))
+            self.mark_game_as_update(game_id)
+        elif chosen in group_actions:
+            self.assign_game_to_group(game_id, group_actions[chosen])
+        elif chosen == new_group_action:
+            self.create_group_and_assign(game_id)
+        elif chosen == remove_group_action and remove_group_action is not None:
+            self.unassign_game_from_group(game_id, current_group)
+        elif chosen == delete_group_action and delete_group_action is not None:
+            self.delete_group_named(current_group)
         elif chosen == delete_action:
-            self.delete_game(int(item.data(Qt.UserRole)))
+            self.delete_game(game_id)
+
+    def assign_game_to_group(self, game_id: int, group_name: str) -> None:
+        row = self.conn.execute("SELECT id FROM catalog_groups WHERE name=?", (group_name,)).fetchone()
+        if row:
+            add_game_to_group(self.conn, game_id, int(row["id"]))
+            self.refresh_games()
+
+    def create_group_and_assign(self, game_id: int) -> None:
+        name, ok = QInputDialog.getText(self, "New group", "Group name:")
+        if not ok:
+            return
+        group_id = create_group(self.conn, name)
+        if group_id is None:
+            return
+        add_game_to_group(self.conn, game_id, group_id)
+        self.refresh_group_filter()
+        self.refresh_games()
+
+    def unassign_game_from_group(self, game_id: int, group_name: str) -> None:
+        remove_game_from_group(self.conn, game_id, group_name)
+        self.refresh_games()
+
+    def delete_group_named(self, group_name: str) -> None:
+        if QMessageBox.question(
+            self,
+            "Delete group",
+            f"Delete the group “{group_name}”?\n\nThe games themselves are not deleted.",
+        ) != QMessageBox.Yes:
+            return
+        delete_group(self.conn, group_name)
+        self.refresh_group_filter()
+        self.refresh_games()
 
     def search_metadata_match(self, game_id: int) -> None:
         if not _metadata_ready(self.settings):
